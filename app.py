@@ -1,83 +1,86 @@
-import os
-import sys
-import logging
-import subprocess
-import platform
-import json
+# app.py – Needle3 Mobile Interface & Automation Server
+import os, sys, json, subprocess, signal, logging
 from flask import Flask, request, jsonify, render_template_string
 
-# --- Logging Setup ---
+# --- 1. Logging Setup ---------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    format="%(asctime)s [%(levelname)s] %(message)s"
 )
-logger = logging.getLogger("needle_app")
 
-# --- 1. Robust Needle Engine Import & Local Fallback Execution ---
-IS_SIMULATION = False
-
-def execute_system_command(command: str) -> dict:
-    """Executes a system command locally and captures stdout/stderr."""
+# --- 2. Port Conflict Cleanup --------------------------------------------------
+def release_port(port=5000):
+    """Automatically frees the specified port before starting the server."""
     try:
-        # Run command in shell safely returning output
-        res = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        return {
-            "stdout": res.stdout.strip(),
-            "stderr": res.stderr.strip(),
-            "returncode": res.returncode
-        }
-    except subprocess.TimeoutExpired:
-        return {"error": "Command execution timed out after 30 seconds."}
-    except Exception as e:
-        return {"error": str(e)}
+        current_pid = str(os.getpid())
+        if sys.platform.startswith("win"):
+            # Windows port cleanup
+            cmd = f'netstat -aon | findstr :{port}'
+            output = subprocess.check_output(cmd, shell=True).decode()
+            for line in output.strip().split('\n'):
+                parts = line.split()
+                if len(parts) >= 5:
+                    pid = parts[-1]
+                    if pid != "0" and pid != current_pid:
+                        subprocess.run(f"taskkill /F /PID {pid}", shell=True, stderr=subprocess.DEVNULL)
+        else:
+            # Linux / Termux / macOS port cleanup
+            cmd = f"lsof -t -i:{port}"
+            pids = subprocess.check_output(cmd, shell=True).decode().strip().split()
+            for pid in pids:
+                if pid and pid != current_pid:
+                    logging.info(f"Port {port} in use by PID {pid}. Terminating process...")
+                    os.kill(int(pid), signal.SIGKILL)
+    except Exception:
+        pass
 
+# Release Port 5000 before initializing
+release_port(5000)
+
+# --- 3. Needle Import & Execution Engine ---------------------------------------
+HAS_NATIVE_NEEDLE = False
 try:
     import needle
-    logger.info("Successfully imported native 'needle' module.")
+    HAS_NATIVE_NEEDLE = True
 except ImportError:
-    IS_SIMULATION = True
-    logger.warning("cactus-needle package not found. Activating LOCAL EXECUTION / SIMULATION mode.")
-
     class _StubNeedle:
-        """Fallback engine that actually executes system commands on the host machine."""
         @staticmethod
         def tool(func):
             return func
 
         @staticmethod
         def run(prompt: str, **kwargs):
-            # Parse prefix command triggers for command execution from remote clients
-            if prompt.startswith("exec ") or prompt.startswith("run "):
-                cmd = prompt.split(" ", 1)[1]
-                result = execute_system_command(cmd)
-                output = result.get("stdout") or result.get("stderr") or result.get("error") or "Executed successfully (no output)."
-                return {
-                    "response": f"[Host Output ({platform.system()})]\n{output}",
-                    "raw": result,
-                    "status": "executed"
-                }
+            prompt_clean = prompt.strip()
+            
+            # Direct System Execution Handling
+            if prompt_clean.lower().startswith("exec "):
+                cmd = prompt_clean[5:].strip()
+                try:
+                    res = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, timeout=10)
+                    return {"response": res.decode('utf-8', errors='replace')}
+                except subprocess.TimeoutExpired:
+                    return {"response": "Error: Command timed out after 10 seconds."}
+                except subprocess.CalledProcessError as e:
+                    return {"response": f"Error (Exit {e.returncode}):\n{e.output.decode('utf-8', errors='replace')}"}
+
+            # Pre-configured helper shortcuts
+            if prompt_clean.lower() in ["hostname", "whoami", "uptime", "pwd", "dir", "ls"]:
+                try:
+                    res = subprocess.check_output(prompt_clean, shell=True, stderr=subprocess.STDOUT, timeout=5)
+                    return {"response": res.decode('utf-8', errors='replace')}
+                except Exception as e:
+                    return {"response": f"Execution error: {str(e)}"}
 
             return {
-                "response": f"[Simulation] Host system IP listening on network. Received command: '{prompt}'. (Tip: Start prompt with 'exec <cmd>' to execute shell commands remotely)",
-                "system_info": {
-                    "platform": platform.platform(),
-                    "python_version": sys.version.split()[0]
-                },
-                "status": "simulated"
+                "response": f"[Simulation Engine] Processed prompt: \"{prompt}\".\nTip: Type 'exec <command>' (e.g., 'exec ls' or 'exec ipconfig') to run direct terminal commands."
             }
 
     needle = _StubNeedle()
+    logging.warning("cactus-needle native library not found. Falling back to execution simulation.")
 
-# --- 2. Configuration & Flask App Setup ---
+# --- 4. Flask Application Setup ------------------------------------------------
 app = Flask(__name__)
 
-# Allow cross-origin requests so external web apps / clients can send commands
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -85,143 +88,125 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
-PORT = int(os.environ.get("FLASK_PORT", os.environ.get("PORT", 5000)))
-HOST = os.environ.get("FLASK_HOST", "0.0.0.0")  # Listens on all network interfaces
-API_KEY = os.environ.get("NEEDLE_API_KEY", None) # Optional authorization key
-
-# Red & White Massive Monster Inspired Mobile & Remote Control HTML Interface
-MOBILE_HTML = """<!doctype html>
+# --- 5. Massive Monster Styled Mobile UI ---------------------------------------
+MOBILE_HTML = """
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-  <title>Needle 3 — Massive Monster Control Console</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Needle3 Engine</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap');
-    
+    :root {
+      --bg-red: #d9232a;
+      --card-bg: #ffffff;
+      --text-dark: #1a1a1a;
+      --accent-black: #0d0d0d;
+    }
+    * { box-sizing: border-box; }
     body {
-      font-family: 'Inter', sans-serif;
-      background-color: #0d0d0d;
-      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0; padding: 1rem;
+      background-color: var(--bg-red);
+      color: var(--text-dark);
+      display: flex; flex-direction: column; align-items: center; min-height: 100vh;
     }
+    .container {
+      width: 100%; max-width: 600px;
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 1.25rem;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      display: flex; flex-direction: column; height: 90vh;
+    }
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 3px solid var(--bg-red);
+      padding-bottom: 0.75rem; margin-bottom: 1rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.6rem; }
+    .brand svg { width: 36px; height: 36px; fill: var(--bg-red); }
+    .brand h1 { margin: 0; font-size: 1.4rem; font-weight: 900; letter-spacing: 1px; color: var(--bg-red); }
+    .badge {
+      font-size: 0.7rem; font-weight: bold; padding: 4px 8px; border-radius: 12px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .badge-sim { background: #fff0f0; color: var(--bg-red); border: 1px solid var(--bg-red); }
+    .badge-native { background: #e6ffed; color: #1a7f37; border: 1px solid #1a7f37; }
 
-    .mono {
-      font-family: 'JetBrains-Mono', monospace;
+    #chat-box {
+      flex: 1; overflow-y: auto; background: #f8f9fa;
+      border: 2px solid #eee; border-radius: 10px;
+      padding: 0.8rem; margin-bottom: 1rem;
+      display: flex; flex-direction: column; gap: 0.75rem;
     }
+    .msg { max-width: 85%; padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.95rem; line-height: 1.4; word-break: break-word; }
+    .msg.user { align-self: flex-end; background: var(--bg-red); color: white; border-bottom-right-radius: 2px; }
+    .msg.bot { align-self: flex-start; background: #e9ecef; color: #212529; border-bottom-left-radius: 2px; }
+    .msg pre { margin: 0; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; }
 
-    /* Custom Scrollbar for Chat Container */
-    #chat::-webkit-scrollbar {
-      width: 6px;
+    .shortcuts { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; overflow-x: auto; padding-bottom: 4px; }
+    .chip {
+      background: #f1f3f5; border: 1px solid #ced4da; border-radius: 12px;
+      padding: 4px 10px; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap;
     }
-    #chat::-webkit-scrollbar-track {
-      background: #171717;
-    }
-    #chat::-webkit-scrollbar-thumb {
-      background: #dc2626;
-      border-radius: 3px;
-    }
+    .chip:hover { background: var(--bg-red); color: white; border-color: var(--bg-red); }
 
-    .monster-red {
-      background-color: #e51d25;
+    .input-group { display: flex; gap: 0.5rem; }
+    input[type="text"] {
+      flex: 1; padding: 0.75rem; border: 2px solid #ddd; border-radius: 8px; font-size: 0.95rem; outline: none;
     }
-    .monster-red-dark {
-      background-color: #b91c1c;
+    input[type="text"]:focus { border-color: var(--bg-red); }
+    button {
+      background: var(--bg-red); color: white; border: none; border-radius: 8px;
+      padding: 0.75rem 1.25rem; font-weight: bold; cursor: pointer;
     }
-    .monster-border {
-      border-color: #e51d25;
-    }
+    button:active { transform: scale(0.98); }
   </style>
 </head>
-<body class="h-screen flex flex-col justify-between max-w-4xl mx-auto p-2 sm:p-4">
-
-  <!-- Header Banner with Massive Monster Branding -->
-  <header class="monster-red rounded-xl p-4 shadow-lg text-white mb-3 flex flex-wrap justify-between items-center gap-3">
-    <div class="flex items-center space-x-3">
-      <!-- Embedded Massive Monster Style SVG Logo -->
-      <div class="bg-white p-2 rounded-lg shadow-md flex items-center justify-center w-12 h-12 flex-shrink-0">
-        <svg viewBox="0 0 100 120" class="w-8 h-8 fill-[#e51d25]">
-          <path d="M 20 20 L 10 35 L 25 35 Z"/>
-          <path d="M 80 20 L 90 35 L 75 35 Z"/>
-          <path d="M 20 30 Q 50 15 80 30 Q 90 60 85 90 Q 50 100 15 90 Q 10 60 20 30 Z" />
-          <circle cx="35" cy="45" r="5" fill="#e51d25"/>
-          <circle cx="65" cy="45" r="5" fill="#e51d25"/>
-          <path d="M 30 60 Q 50 75 70 55 Q 55 80 30 60 Z" fill="#e51d25"/>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="brand">
+        <svg viewBox="0 0 100 100">
+          <path d="M 50,10 C 30,10 20,25 20,45 C 20,65 30,90 50,90 C 70,90 80,65 80,45 C 80,25 70,10 50,10 Z M 35,35 A 5,5 0 1,1 35,45 A 5,5 0 1,1 35,35 Z M 65,35 A 5,5 0 1,1 65,45 A 5,5 0 1,1 65,35 Z M 35,60 Q 50,75 65,60 Z"/>
         </svg>
+        <h1>NEEDLE 3</h1>
       </div>
-      <div>
-        <h1 class="font-extrabold text-lg sm:text-xl tracking-tight leading-none uppercase">Needle 3</h1>
-        <p class="text-xs font-semibold text-red-100 uppercase tracking-widest mt-1">Massive Monster Control Console</p>
-      </div>
-    </div>
-
-    <!-- Status Badge -->
-    <div class="flex items-center space-x-2">
-      <span class="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-white text-[#e51d25] shadow-sm">
-        {{ 'Local Exec Engine' if is_sim else 'Native Engine' }}
+      <span class="badge {{ 'badge-native' if native else 'badge-sim' }}">
+        {{ 'NATIVE ENGINE' if native else 'SIMULATION / EXEC MODE' }}
       </span>
     </div>
-  </header>
 
-  <!-- Network & Quick Commands Tool Bar -->
-  <div class="bg-neutral-900 border border-neutral-800 rounded-lg p-2.5 mb-3 flex flex-wrap justify-between items-center text-xs text-neutral-400 gap-2">
-    <div class="flex items-center space-x-2">
-      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-      <span>Host: <strong class="text-white mono">{{ request.host }}</strong></span>
+    <div id="chat-box">
+      <div class="msg bot">Ready to accept commands. Type <code>exec &lt;cmd&gt;</code> to run terminal commands remotely.</div>
     </div>
-    <div class="flex items-center space-x-1.5 overflow-x-auto py-1">
-      <span class="text-neutral-500 font-semibold mr-1">Shortcuts:</span>
-      <button onclick="quickCmd('exec hostname')" class="bg-neutral-800 hover:bg-red-700 hover:text-white px-2 py-1 rounded transition">hostname</button>
-      <button onclick="quickCmd('exec uptime')" class="bg-neutral-800 hover:bg-red-700 hover:text-white px-2 py-1 rounded transition">uptime</button>
-      <button onclick="quickCmd('exec whoami')" class="bg-neutral-800 hover:bg-red-700 hover:text-white px-2 py-1 rounded transition">whoami</button>
+
+    <div class="shortcuts">
+      <span class="chip" onclick="quickSend('hostname')">hostname</span>
+      <span class="chip" onclick="quickSend('whoami')">whoami</span>
+      <span class="chip" onclick="quickSend('exec uptime')">uptime</span>
+      <span class="chip" onclick="quickSend('exec dir')">dir / ls</span>
+    </div>
+
+    <div class="input-group">
+      <input id="prompt" type="text" placeholder="Enter prompt or exec command..." autocomplete="off" onkeydown="if(event.key==='Enter') send()">
+      <button onclick="send()">Send</button>
     </div>
   </div>
 
-  <!-- Chat Log Output Window -->
-  <main id="chat" class="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl p-4 overflow-y-auto space-y-3 mb-3 shadow-inner">
-    <div class="bg-neutral-800/60 border border-neutral-700/50 p-3 rounded-lg text-xs text-neutral-300">
-      <strong class="text-red-400">⚡ Console Ready:</strong> Enter natural language queries or execute direct host commands by prefixing with <code class="bg-neutral-900 px-1.5 py-0.5 rounded text-red-300 mono">exec &lt;command&gt;</code>.
-    </div>
-  </main>
-
-  <!-- Input Form & Controls -->
-  <form id="input-area" onsubmit="send(event)" class="flex gap-2">
-    <input 
-      id="prompt" 
-      type="text" 
-      placeholder="Type prompt or 'exec <command>' to execute..." 
-      autocomplete="off" 
-      required
-      class="flex-1 bg-neutral-900 border border-neutral-700 focus:border-red-600 focus:ring-1 focus:ring-red-600 rounded-xl px-4 py-3 text-white placeholder-neutral-500 text-sm outline-none transition mono"
-    />
-    <button 
-      id="send-btn" 
-      type="submit" 
-      class="monster-red hover:bg-red-700 active:bg-red-800 text-white font-bold px-6 py-3 rounded-xl shadow-lg transition flex items-center justify-center gap-2"
-    >
-      <span>Send</span>
-      <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-    </button>
-  </form>
-
   <script>
-    function quickCmd(cmd) {
-      const input = document.getElementById('prompt');
-      input.value = cmd;
+    function quickSend(cmd) {
+      document.getElementById('prompt').value = cmd;
       send();
     }
-
-    async function send(e) {
-      if (e) e.preventDefault();
+    async function send() {
       const input = document.getElementById('prompt');
-      const btn = document.getElementById('send-btn');
       const text = input.value.trim();
       if (!text) return;
 
-      appendMsg('user', text);
+      append('user', text);
       input.value = '';
-      input.disabled = true;
-      btn.disabled = true;
 
       try {
         const res = await fetch('/chat', {
@@ -229,91 +214,57 @@ MOBILE_HTML = """<!doctype html>
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({prompt: text})
         });
-        
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Server processing error');
-        
-        const reply = typeof data.response === 'string' ? data.response : JSON.stringify(data, null, 2);
-        appendMsg('bot', reply);
+        const responseText = data.response || JSON.stringify(data, null, 2);
+        append('bot', responseText);
       } catch (err) {
-        appendMsg('error', 'Error: ' + err.message);
-      } finally {
-        input.disabled = false;
-        btn.disabled = false;
-        input.focus();
+        append('bot', 'Error communicating with host server: ' + err.message);
       }
     }
 
-    function appendMsg(role, text) {
-      const chat = document.getElementById('chat');
+    function append(role, text) {
+      const box = document.getElementById('chat-box');
       const div = document.createElement('div');
-      
-      if (role === 'user') {
-        div.className = 'ml-auto max-w-[85%] bg-neutral-800 border-l-4 border-red-600 text-white p-3 rounded-r-lg rounded-tl-lg text-sm shadow-md';
-      } else if (role === 'bot') {
-        div.className = 'mr-auto max-w-[90%] bg-neutral-950 border border-neutral-800 text-neutral-200 p-3 rounded-lg text-sm shadow-md mono whitespace-pre-wrap';
+      div.className = 'msg ' + role;
+      if (text.includes('\n')) {
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        div.appendChild(pre);
       } else {
-        div.className = 'mx-auto max-w-[90%] bg-red-950/80 border border-red-800 text-red-200 p-2.5 rounded-lg text-xs text-center';
+        div.textContent = text;
       }
-
-      div.textContent = text;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
     }
   </script>
 </body>
 </html>
 """
 
-# --- 3. Endpoints & Control Handlers ---
-@app.route("/", methods=["GET"])
+# --- 6. Endpoints -------------------------------------------------------------
+@app.route("/")
 def index():
-    """Serves the remote command web UI."""
-    return render_template_string(MOBILE_HTML, is_sim=IS_SIMULATION)
+    return render_template_string(MOBILE_HTML, native=HAS_NATIVE_NEEDLE)
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.get_json(force=True, silent=True) or {}
+    prompt = data.get("prompt", "")
+    if not prompt:
+        return jsonify({"error": "Missing prompt"}), 400
+
+    result = needle.run(prompt)
+    if isinstance(result, str):
+        return jsonify({"response": result})
+    return jsonify(result)
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Health check and network status endpoint."""
-    return jsonify({
-        "status": "online",
-        "system": platform.platform(),
-        "simulation_mode": IS_SIMULATION,
-        "host_ip": request.host
-    }), 200
+    return jsonify({"status": "ok", "native_engine": HAS_NATIVE_NEEDLE})
 
-@app.route("/chat", methods=["OPTIONS", "POST"])
-def chat():
-    """Main remote command & inference entry point."""
-    if request.method == "OPTIONS":
-        return jsonify({"status": "ok"}), 200
-
-    # Optional API key authorization
-    if API_KEY:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.replace("Bearer ", "") != API_KEY:
-            return jsonify({"error": "Unauthorized access: invalid API Key"}), 401
-
-    if not request.is_json:
-        return jsonify({"error": "Content-Type must be application/json"}), 400
-
-    data = request.get_json(silent=True)
-    if not data or "prompt" not in data:
-        return jsonify({"error": "Missing 'prompt' in request body"}), 400
-
-    prompt = str(data.get("prompt", "")).strip()
-    if not prompt:
-        return jsonify({"error": "Prompt cannot be empty"}), 400
-
-    logger.info(f"Received remote command from {request.remote_addr}: '{prompt}'")
-
-    try:
-        result = needle.run(prompt)
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Execution error: {e}", exc_info=True)
-        return jsonify({"error": f"Failed to execute: {str(e)}"}), 500
-
+# --- 7. Main Runner -----------------------------------------------------------
 if __name__ == "__main__":
-    logger.info(f"Starting Needle Control Server on http://{HOST}:{PORT}")
-    logger.info("Access from other systems on your local Wi-Fi / network using the host IP address.")
-    app.run(host=HOST, port=PORT, debug=False)
+    port = int(os.environ.get("FLASK_PORT", os.environ.get("PORT", 5000)))
+    release_port(port)
+    logging.info(f"Starting Needle3 server on 0.0.0.0:{port}...")
+    app.run(host="0.0.0.0", port=port, debug=False)
