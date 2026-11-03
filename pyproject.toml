@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "needle3"
+version = "1.0.0"
+description = "Mobile-first Needle 3 tool-calling interface with a real native runtime, safe tools, sessions, and a browser sandbox."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "Flask>=3.0.0,<4",
+  "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+native = ["cactus-needle>=3.2.10,<4"]
+dev = ["pytest>=8,<9"]
+
+[project.scripts]
+needle3 = "needle_engine.server:run_server"
+
+[tool.setuptools]
+py-modules = ["app", "needle_terminal_client", "needle_tools_registry"]
+
+[tool.setuptools.packages.find]
+include = ["needle_engine*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

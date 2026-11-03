@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local runtime state
+.needle3/
+*.log
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,69 +1,51 @@
-# Needle 3 — Mobile Web Interface & Browser Sandbox
+# Needle 3 — Local Tool-Calling Assistant
 
-A small, dependency-light toolkit for working with **Needle 3**, Cactus Compute's 8–29 MB on-device model for tool calls, structured extraction and embeddings.
+A local-first, mobile-friendly application around **Cactus Compute Needle 3**, the 8–29 MB on-device model for tool calls and structured extraction. The app runs the **real native engine** when the platform supports it, executes a validated set of safe tools, keeps isolated sessions, and exposes the same backend to a browser sandbox, a classic chat page, and a terminal client.
 
-This repository contains two surfaces that work independently or together:
+Simulation is available, but only as an **explicitly selected mode**. It is never used silently when native inference fails.
 
-| Surface | What it is | Runtime |
-| --- | --- | --- |
-| **Browser sandbox** (`sandbox.html`) | A polished, standalone playground for designing tool schemas and testing Needle-shaped tool calls. Includes a simulated phone environment, preset requests, editable tool JSON, and JSON/Calls result views. | Any modern browser. No server, no build step. |
-| **Flask launcher** (`app.py`) | Serves the sandbox at `/` and `/sandbox`, keeps the original chat UI at `/classic`, and exposes `/chat` and `/health`. Opens the sandbox in your default browser on startup. Uses the native Needle engine when importable, otherwise a clearly marked simulation stub. | Python + Flask. |
+## Verified status
 
-The sandbox is a **UI and contract test harness**, not model inference. It reproduces Needle's response shape (`function_calls`, `reasoning`, `confidence`, `results`) with a deterministic rule engine so you can iterate on tool descriptions and UX before wiring a real model.
+| Check | Result |
+| --- | --- |
+| Native package | `cactus-needle==3.2.10` (Python 3.11.9, Windows 11) |
+| Native load | ~10.4 s on first run (engine + weights download); ~0.6–1.3 s per request once cached |
+| Real tool calls | `get_current_time`, `control_device`, `parse_invoice_text`, filesystem tools exercised through `needle.Needle` |
+| Automated tests | 54 passed (`python -m pytest`) |
+| Sandbox | Backend + explicit Demo modes verified in a real browser |
+| Classic chat | Native backend, sessions and tool events verified in a real browser |
 
----
+> Needle 3 is a **tool router**, not a chat model. The API's `response` field is a deterministic rendering of the actual tool outputs. The server does not invent assistant prose, confidence scores, or tool calls.
 
-## Contents
+## Architecture
 
-- [Quick start](#quick-start)
-- [Command reference](#command-reference)
-- [Browser sandbox](#browser-sandbox)
-- [Flask launcher](#flask-launcher)
-- [API](#api)
-- [Configuration](#configuration)
-- [Native Needle engine](#native-needle-engine)
-- [Android](#android)
-- [Project structure](#project-structure)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
-- [Acknowledgements](#acknowledgements)
+```text
+Browser: sandbox.html (Backend / Demo)      Browser: classic.html
+                 │                                  │
+                 └──────────────┬───────────────────┘
+                                ▼
+                  Flask API (needle_engine/api.py)
+                                │
+                  NeedleAgent (needle_engine/agent.py)
+                     ├─ SessionManager
+                     ├─ ToolExecutor ── schema validation, timeouts, trace
+                     ├─ NativeRuntime ── cactus-needle.Needle (serialized)
+                     └─ SimulationRuntime ── explicit only
+                                │
+                     ToolRegistry (8 safe tools)
+                                │
+             time · device simulator · extraction · system · filesystem
+```
 
----
+More detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The audit and verified package findings are in [`docs/IMPLEMENTATION_AUDIT.md`](docs/IMPLEMENTATION_AUDIT.md).
 
 ## Quick start
 
-### 1. Open the sandbox (no install)
-
-Clone the repository and open `sandbox.html` directly:
+### 1. Install
 
 ```bash
 git clone https://github.com/DwaipayanDutta/Needle3.git
 cd Needle3
-```
-
-```powershell
-# Windows PowerShell
-start sandbox.html
-```
-
-```bash
-# macOS
-open sandbox.html
-
-# Linux
-xdg-open sandbox.html
-```
-
-Or serve the folder and open it from another device:
-
-```bash
-python -m http.server 8000
-# http://localhost:8000/sandbox.html
-```
-
-### 2. Run the Flask chat app
-
-```bash
 python -m venv .venv
 ```
 
@@ -71,19 +53,29 @@ python -m venv .venv
 # Windows PowerShell
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python app.py
 ```
 
 ```bash
 # macOS / Linux
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+```
+
+Install the real native engine (optional but recommended where supported):
+
+```bash
+python -m pip install -r requirements-native.txt
+```
+
+### 2. Run
+
+```bash
 python app.py
 ```
 
-`app.py` starts the server and opens the sandbox at <http://127.0.0.1:5000/> in your default browser. The sandbox is also reachable from a phone on the same network at `http://<your-computer-ip>:5000/`. The original chat UI remains available at `/classic`.
+The server binds to `127.0.0.1:5000` by default and opens the sandbox at <http://127.0.0.1:5000/>. It writes a PID file, checks the port safely, and never kills an unrelated process.
 
-To start the server without opening a browser (headless machines, SSH sessions, or when you want to open the page yourself):
+Without opening a browser:
 
 ```bash
 NEEDLE_OPEN_BROWSER=0 python app.py
@@ -93,367 +85,395 @@ NEEDLE_OPEN_BROWSER=0 python app.py
 $env:NEEDLE_OPEN_BROWSER=0; python app.py
 ```
 
-> Startup calls `release_port()` for the configured port, which **terminates whatever process is listening there**. If something else uses port 5000, choose another port first (see [Configuration](#configuration)) or stop the other process yourself.
+Explicit simulation (no model download, useful on unsupported platforms):
 
-### 3. Run the CLI client
+```bash
+NEEDLE_MODE=simulation python app.py
+```
+
+```powershell
+$env:NEEDLE_MODE=simulation; python app.py
+```
+
+### 3. Verify
+
+```bash
+curl -s http://127.0.0.1:5000/health
+curl -s http://127.0.0.1:5000/ready
+```
+
+`/ready` returns `200` only when the engine can process AI requests. `503` means the
+server is up but the selected runtime is not ready.
+
+### 4. CLI
 
 ```bash
 python needle_terminal_client.py
 ```
 
-Type a prompt and press Enter. `exit` or `quit` closes the client.
+The CLI uses the same native runtime, tools and sessions as the web app. It supports
+`:help`, `:mode auto|native|simulation`, `:tools`, `:session`, `:history` and `:reset`.
+There is no shell command, by design.
 
----
+## Modes
 
-## Command reference
+`NEEDLE_MODE` sets the default; each `POST /chat` may request a mode explicitly.
 
-All commands run from the repository root unless noted.
-
-| Task | Command |
+| Mode | Behavior |
 | --- | --- |
-| Open the sandbox (Windows) | `start sandbox.html` |
-| Open the sandbox (macOS) | `open sandbox.html` |
-| Open the sandbox (Linux) | `xdg-open sandbox.html` |
-| Serve the repository over HTTP | `python -m http.server 8000` |
-| Sandbox URL when served | `http://localhost:8000/sandbox.html` |
-| Create a virtual environment | `python -m venv .venv` |
-| Activate (Windows PowerShell) | `.\.venv\Scripts\Activate.ps1` |
-| Activate (macOS/Linux) | `source .venv/bin/activate` |
-| Install Flask | `python -m pip install -r requirements.txt` |
-| Run the app (sandbox at `/`) | `python app.py` |
-| Run without opening a browser (bash) | `NEEDLE_OPEN_BROWSER=0 python app.py` |
-| Run without opening a browser (PowerShell) | `$env:NEEDLE_OPEN_BROWSER=0; python app.py` |
-| Sandbox UI in the app | `http://127.0.0.1:5000/` |
-| Original chat UI in the app | `http://127.0.0.1:5000/classic` |
-| Run on another port (bash) | `FLASK_PORT=8080 python app.py` |
-| Run on another port (PowerShell) | `$env:FLASK_PORT=8080; python app.py` |
-| Run on another port (cmd.exe) | `set FLASK_PORT=8080 && python app.py` |
-| Health check (bash) | `curl http://127.0.0.1:5000/health` |
-| Health check (PowerShell) | `Invoke-RestMethod http://127.0.0.1:5000/health` |
-| Send a chat request (bash) | `curl -X POST http://127.0.0.1:5000/chat -H "Content-Type: application/json" -d '{"prompt":"hostname"}'` |
-| Send a chat request (PowerShell) | `Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/chat -ContentType "application/json" -Body '{"prompt":"hostname"}'` |
-| Run the CLI | `python needle_terminal_client.py` |
-| Exercise the sample tools | `python -c "import needle_tools_registry as t; print(t.get_current_time('UTC'))"` |
-| Install the native engine (optional) | `python -m pip install cactus-needle` |
-| Disable Needle telemetry (bash) | `NEEDLE_TELEMETRY=0 DO_NOT_TRACK=1 python app.py` |
+| `auto` (default) | Uses native inference when available. If the package or platform is unavailable, requests return `503` with `engine_unavailable`. **No silent simulation.** |
+| `native` | Requires the native runtime. Returns `503` if it is not ready. |
+| `simulation` | Explicit deterministic demonstration. No model is loaded. `confidence` is `null`, output is marked `simulated`/`mode: "simulation"`. |
 
----
+The sandbox and classic page expose this choice in the UI. The standalone sandbox
+(`file://`) is labeled **Local demo** and never claims to be native.
 
-## Browser sandbox
+## Interfaces
 
-`sandbox.html` is self-contained: HTML, CSS and JavaScript in one file, with no frameworks, external assets or build step. Open it directly, or let `app.py` serve it at `/` and open it for you.
+### Browser sandbox — `/`
 
-### Layout
+The primary UI. It retains the phone environment, tool editor, presets, JSON/Calls
+tabs, activity log and keyboard shortcuts.
 
-- **Environment** — a simulated phone. The home screen, dock, quick settings, brightness, volume, now-playing bar, notification banner and per-app sheets all react to the calls the engine returns.
-- **Defined tools** — an editable JSON array of tool definitions. Each entry can include `name`, `description`, `parameters` (JSON Schema) and optional `triggers` (regular expressions).
-- **Query** — the natural-language request. Press **Run** or **Enter**.
-- **Result** — two views:
-  - **JSON** — the full response object, syntax-highlighted.
-  - **Calls** — one card per call with arguments, executed output, confidence and reasoning.
-- **Try** — eight preset requests covering single calls, two- and three-call chains, trigger routing, extraction and an intentional refusal.
+- **Backend** mode calls the real `/chat` endpoint. The tool editor shows the live
+  server registry and is read-only; browser edits cannot grant server execution.
+- **Demo** mode sends `mode: "simulation"` to the backend when served over HTTP.
+- Opening `sandbox.html` directly from disk runs the local demo engine; the Backend
+  button is disabled.
+- Run, Cancel, Copy, Export, Reset, mic input, and `Enter` / `Ctrl`/`Cmd`+`Enter` / `/` / `R`
+  shortcuts are supported.
+- Failure to reach the backend shows an error; it does not silently switch modes.
 
-### Controls
+### Classic chat — `/classic`
 
-| Control | Action |
-| --- | --- |
-| `Enter` in the query box | Run the request |
-| `Ctrl` / `Cmd` + `Enter` | Run from anywhere |
-| `/` | Focus the query box |
-| `R` | Reset the environment and restore the default tools |
-| `Reset` | Same as `R` |
-| `Format` | Pretty-print and validate the tools JSON |
-| `Copy` | Copy the last response JSON |
-| Mic button | Dictate a request where the browser supports the Web Speech API |
+A red/white mobile-first chat with sessions, timestamps, tool cards, mode badge,
+Auto/Demo selector, clear, copy and error states. It calls the same backend.
 
-### What the simulation does
+### Terminal — `needle_terminal_client.py`
 
-1. The request is normalised and passed through intent handlers.
-2. Requests with multiple actions are split on `and`, `then`, commas and semicolons; whole-text intents (messages, extraction, speech) are consumed first so their text is not split.
-3. If no handler matches, a schema-keyword fallback scores the defined tools; a request with no plausible tool returns an **empty call list** rather than a guess.
-4. Each call is executed against the phone state and the response is assembled in Needle's shape:
-
-```json
-{
-  "type": "call",
-  "success": true,
-  "error": null,
-  "error_code": null,
-  "function_calls": [
-    {
-      "name": "control_device",
-      "arguments": { "device": "bedroom lights", "action": "dim", "value": 30 }
-    }
-  ],
-  "reasoning": "matched a tool-specific rule: control_device(device=\"bedroom lights\", action=\"dim\", value=30).",
-  "confidence": 0.92,
-  "results": [
-    {
-      "name": "control_device",
-      "arguments": { "device": "bedroom lights", "action": "dim", "value": 30 },
-      "output": "bedroom lights → dim (30%)"
-    }
-  ],
-  "mode": "simulation",
-  "latency_ms": 8,
-  "tools_considered": 19
-}
-```
-
-Edit the tool JSON and run again to see the match change. Invalid JSON is reported inline and blocks the run. Tools without a specific handler still work through the schema fallback — try adding a `set_thermostat` tool with `room` and `temperature` properties.
-
-### Sandbox presets
-
-| Preset | Demonstrates |
-| --- | --- |
-| Dim + jazz | Two calls from one sentence |
-| Morning run | Three calls: alarm, setting, clock |
-| Text Ada | Whole-text message with a recipient and body |
-| Find the lease | Trigger-style routing to document search |
-| Invoice | Structured extraction with typed fields |
-| Off-topic | Empty call list (refusal), not a guess |
-| Screen | Brightness change plus screenshot |
-| Music + timer | Media control plus timer |
-
----
-
-## Flask launcher
-
-`app.py` is a single-file Flask application:
-
-1. On startup it frees the configured port (5000 by default), then serves:
-   - `/` and `/sandbox` — the standalone sandbox UI (`sandbox.html`).
-   - `/classic` — the original inline mobile chat page (`MOBILE_HTML`).
-   - `/chat` — the Python engine endpoint.
-   - `/health` — status.
-2. It tries `import needle`. If the import succeeds, `HAS_NATIVE_NEEDLE` is `True`; otherwise a `_StubNeedle` keeps the app running.
-3. Unless `NEEDLE_OPEN_BROWSER=0`, it opens `http://127.0.0.1:<port>/` in the default browser about a second after startup.
-4. If `sandbox.html` cannot be found, `/` and `/sandbox` fall back to the classic chat page.
-
-The sandbox's **Run** button uses its browser-side simulation; it does **not** call `/chat`. Use `/classic` or POST to `/chat` when you want the Python engine.
-
-In simulation mode, the stub supports:
-
-```text
-exec <command>     run a shell command and return its output
-hostname           shortcut for common read-only commands
-whoami
-uptime
-pwd
-dir
-ls
-```
-
-Anything else returns a clearly marked `[Simulation Engine]` message. Simulation is expected on Pydroid 3 and on raw Termux without a container.
-
-> The Flask bridge calls `needle.run(prompt)`. The current `cactus-needle` Python API is agent-based (`needle.Needle(tools=[...]).run(prompt)`), so installing the native wheel may require adapting the bridge. See [Native Needle engine](#native-needle-engine).
-
----
+Native/simulation choice, session history, tool list, and real result output.
 
 ## API
 
-### `GET /` and `GET /sandbox`
-
-Return the standalone sandbox UI (`sandbox.html`). If the file is missing, both return the classic chat page.
-
-### `GET /classic`
-
-Returns the original inline mobile chat HTML page.
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/` | Sandbox UI |
+| `GET` | `/sandbox` | Sandbox UI alias |
+| `GET` | `/classic` | Classic chat UI |
+| `GET` | `/health` | App, engine, mode, uptime, tool names |
+| `GET` | `/ready` | `200` only when the engine can process requests |
+| `GET` | `/api/status` | Safe diagnostics, tools, capabilities, limits |
+| `POST` | `/chat` | Run a prompt |
+| `POST` | `/chat/reset` | Clear a session |
+| `POST` | `/sessions` | Create a session |
+| `GET` | `/sessions/<id>` | Session metadata and history |
+| `DELETE` | `/sessions/<id>` | Delete a session |
+| `GET` | `/tools` | Registered tool schemas |
+| `POST` | `/tools/validate` | Validate proposed schemas without registering them |
 
 ### `POST /chat`
 
-Request:
-
-```json
-{ "prompt": "dim the bedroom lights" }
-```
-
-Response (native mode returns the engine object; simulation returns a `response` string):
-
-```json
-{ "response": "[Simulation Engine] Processed prompt: \"dim the bedroom lights\"." }
-```
-
-Errors: `400` with `{ "error": "Missing prompt" }` when `prompt` is empty. CORS is open (`Access-Control-Allow-Origin: *`).
-
-### `GET /health`
-
-```json
-{ "status": "ok", "native_engine": false }
-```
-
-### Example
-
 ```bash
-curl -s http://127.0.0.1:5000/health
 curl -s -X POST http://127.0.0.1:5000/chat \
   -H "Content-Type: application/json" \
-  -d '{"prompt":"exec whoami"}'
+  -d '{"prompt":"What time is it in Kolkata?","mode":"auto"}'
 ```
 
----
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/chat `
+  -ContentType "application/json" `
+  -Body '{"prompt":"What time is it in Kolkata?","mode":"auto"}'
+```
+
+Request fields:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `prompt` | string | yes | Trimmed; limited by `NEEDLE_MAX_PROMPT_CHARS` |
+| `session_id` | string | no | `[A-Za-z0-9_-]{1,64}`; created if absent |
+| `mode` | string | no | `auto`, `native`, or `simulation` |
+| `tools_enabled` | boolean | no | Default `true`; `false` uses a no-tools native agent (slower) and returns no calls |
+
+Response (abridged):
+
+```json
+{
+  "success": true,
+  "session_id": "05114984195b499bb57d5f0c59c313c0",
+  "request_id": "d9dc227f58d44581871f283a111af24f",
+  "response": "get_current_time: Current time: 2026-11-03 22:25:22 IST (Asia/Kolkata)",
+  "function_calls": [
+    { "name": "get_current_time", "arguments": { "timezone": "Kolkata" } }
+  ],
+  "suppressed_calls": [],
+  "results": [
+    {
+      "name": "get_current_time",
+      "arguments": { "timezone": "Kolkata" },
+      "ok": true,
+      "status": "ok",
+      "output": {
+        "timezone": "Asia/Kolkata",
+        "iso": "2026-11-03T22:25:22+05:30",
+        "display": "2026-11-03 22:25:22 IST",
+        "epoch": 1793724922
+      },
+      "error": null,
+      "latency_ms": 1.8
+    }
+  ],
+  "reasoning": "Result shows Kolkata is in Kolkata. Respond with that.",
+  "confidence": 0.53,
+  "mode": "native",
+  "simulated": false,
+  "tools_enabled": true,
+  "latency_ms": 1017.0,
+  "error": null,
+  "error_code": null,
+  "errors": [],
+  "model": { "generation": 3, "package_version": "3.2.10", "weights": null },
+  "metrics": { "prefill_tps": 392.0, "decode_tps": 164.6, "peak_ram_mb": 127.2 },
+  "app_version": "1.0.0"
+}
+```
+
+Errors use the same envelope with `success: false`, a safe `error`, and `error_code`.
+HTTP status codes: `400` invalid request/tool schema, `404` unknown session/route,
+`413` body too large, `503` engine unavailable/busy, `504` timeout.
+
+## Tools
+
+| Tool | Purpose | Safety |
+| --- | --- | --- |
+| `get_current_time` | Current time for local/UTC/IANA timezone | Read-only |
+| `control_device` | On/off/toggle/dim/brighten/lock/unlock/set a named device | In-memory simulated store; marked `simulated` |
+| `parse_invoice_text` | Merchant, amount, currency, due date | Read-only; validated fields |
+| `extract_structured_data` | Emails, amounts, dates, phone numbers; optional fields | Read-only |
+| `get_system_info` | OS, Python, CPU count, cwd, PID | Read-only; no env values |
+| `get_current_directory` | Process working directory | Read-only |
+| `list_directory` | List up to 200 entries under the file root | Confined to `NEEDLE_FILE_ROOT` |
+| `search_files` | Search names under the file root, max 50 by default | Confined; skips `.git`, `.venv`, etc. |
+
+There is **no shell tool**. `NEEDLE_ENABLE_SHELL=1` fails startup. The HTTP API is not a
+shell endpoint. Browser edits to tool definitions never register server tools.
+
+Add a tool by creating a `ToolSpec` in `needle_engine/tool_registry.py` with a JSON
+Schema, a timeout, and a safe implementation, then registering it in
+`default_registry()`. Native callables and schemas are generated from the registry.
 
 ## Configuration
 
-`app.py` reads these variables:
+The app loads `.env` if present, without overriding real environment variables. Copy
+[`.env.example`](.env.example).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `FLASK_PORT` | `5000` | Port for the Flask server |
-| `PORT` | `5000` | Fallback when `FLASK_PORT` is unset |
-| `NEEDLE_OPEN_BROWSER` | `1` | Set to `0`, `false`, `no` or `off` to skip opening a browser |
+| `FLASK_HOST` | `127.0.0.1` | Bind address. `0.0.0.0` is an explicit LAN choice |
+| `FLASK_PORT` / `PORT` | `5000` | Port |
+| `NEEDLE_OPEN_BROWSER` | `1` | Open the sandbox on startup |
+| `NEEDLE_MODE` | `auto` | `auto`, `native`, or `simulation` |
+| `NEEDLE_ALLOW_SIMULATION` | `1` | Permit explicit simulation requests |
+| `NEEDLE_MODEL` | unset | Path to a tuned `.cact` file |
+| `NEEDLE_GENERATION` | `3` | Native model generation (`2` or `3`) |
+| `NEEDLE_TELEMETRY` | `1` | Set `0` to set `NEEDLE_TELEMETRY=0`/`DO_NOT_TRACK=1` for the native package |
+| `NEEDLE_MAX_TOOL_CALLS` | `8` | Per-request tool call limit |
+| `NEEDLE_REQUEST_TIMEOUT` | `30` | Native/tool request timeout in seconds |
+| `NEEDLE_SESSION_TIMEOUT` | `3600` | Session TTL in seconds |
+| `NEEDLE_MAX_PROMPT_CHARS` | `4000` | Prompt character limit |
+| `NEEDLE_MAX_REQUEST_BYTES` | `65536` | HTTP body limit |
+| `NEEDLE_MAX_NEW_TOKENS` | `512` | Native decode limit |
+| `NEEDLE_MAX_SESSIONS` | `100` | In-memory session cap |
+| `NEEDLE_MAX_HISTORY` | `40` | Messages retained per session |
+| `NEEDLE_SESSION_CONTEXT_TURNS` | `0` | Recent turns prepended to the prompt |
+| `NEEDLE_FILE_ROOT` | cwd | Filesystem tool sandbox root |
+| `NEEDLE_CORS_ORIGINS` | unset | Comma-separated allowed origins; unset = same-origin only |
+| `NEEDLE_ENABLE_SHELL` | `0` | Must remain `0`; shell is not supported |
+| `NEEDLE_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `NEEDLE_DEBUG` | `0` | Return internal errors locally; never enable on a shared host |
+| `NEEDLE_PID_FILE` | `.needle3/needle3.pid` | PID file used by start/stop scripts |
 
-The server always binds to `0.0.0.0`. `FLASK_HOST` is **not** read by the current code. Telemetry variables apply to the native `cactus-needle` engine, not to Flask:
+## Native engine
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `NEEDLE_TELEMETRY` | `1` | Set to `0` to disable native-engine telemetry |
-| `DO_NOT_TRACK` | unset | Set to `1` to disable native-engine telemetry |
-
----
-
-## Native Needle engine
-
-Install the package:
+Install:
 
 ```bash
-python -m pip install cactus-needle
+python -m pip install -r requirements-native.txt
+# or: python -m pip install "cactus-needle>=3.2.10,<4"
 ```
 
-The documented API builds an agent from decorated Python functions:
+The API used by this project:
 
 ```python
 import needle
-from needle_tools_registry import get_current_time, control_device, parse_invoice_text
 
-agent = needle.Needle(tools=[get_current_time, control_device, parse_invoice_text])
-response = agent.run("what time is it?")
-print(response["function_calls"])
-print(response["results"])
+agent = needle.Needle(tools=[...], system="...", stateless=True)
+response = agent.run("What time is it in Kolkata?", max_steps=8, max_new_tokens=512)
+print(response["function_calls"], response["confidence"], response["results"])
 ```
 
-`needle_tools_registry.py` contains three sample tools decorated with `@needle.tool`:
+The engine and weights are fetched from Hugging Face on first use and cached. Published
+engines cover x86_64 and arm64 on Windows, macOS and Linux (glibc/musl). **Android/Bionic
+is not supported by the published shared libraries**; the package raises a clear error.
+Use simulation, PRoot Ubuntu, or a custom `NEEDLE3_LIB_PATH` build.
 
-- `get_current_time(timezone)`
-- `control_device(device_name, action)`
-- `parse_invoice_text(text)`
+The C engine is process-global per generation, so this app serializes native inference.
+`tools_enabled: false` creates a temporary no-tools agent, which reinitializes the
+engine and is slower; use it only when needed.
 
-It is a standalone example: `app.py` does **not** import it. To use the native agent inside the Flask app, build a `needle.Needle` with those functions at startup and call `agent.run(prompt)` in `/chat` instead of `needle.run(prompt)`.
+## Sessions
 
-Native wheels are platform-specific. On Android's Bionic runtime the standard `manylinux` wheel will not load directly; use a Linux container (for example Termux + PRoot Ubuntu) or stay in simulation mode.
+- IDs are random 128-bit values; supplied IDs must match `[A-Za-z0-9_-]{1,64}`.
+- In-memory, per-session lock, TTL, bounded history, reset and delete.
+- No cross-session leakage. No persistence by default.
+- `NEEDLE_SESSION_CONTEXT_TURNS=0` by default because Needle is optimized for
+  single-turn tool routing. Increase carefully if your prompts benefit from context.
 
----
+## Security
 
-## Android
+- Loopback binding by default; LAN exposure is explicit.
+- CORS is disabled unless `NEEDLE_CORS_ORIGINS` names origins.
+- No arbitrary shell execution. `NEEDLE_ENABLE_SHELL=1` fails startup.
+- Filesystem tools are confined to `NEEDLE_FILE_ROOT`; path traversal is rejected.
+- JSON Schema validation rejects unknown arguments and wrong types.
+- Tool calls, timeouts, prompt length and request body size are bounded.
+- Security headers include `X-Content-Type-Options`, `Referrer-Policy`,
+  `X-Frame-Options`, and a Content Security Policy.
+- Prompts and request bodies are not logged; request IDs are.
+- This is a local personal tool, not a multi-user authenticated service. Put an
+  authenticated reverse proxy in front of it before exposing it beyond loopback.
 
-### Open the sandbox
-
-Copy `sandbox.html` to the phone and open it in Chrome, Firefox or Samsung Internet. It works offline and needs no Python.
-
-To reach a copy served by your computer:
+## Start, stop, health
 
 ```bash
-python -m http.server 8000
-# then open http://<your-computer-ip>:8000/sandbox.html on the phone
+python app.py                     # managed server, auto-open
+python scripts/start.py           # same managed lifecycle
+python scripts/stop.py            # stop only the recorded PID
+python scripts/healthcheck.py     # check /health and /ready
 ```
 
-### Run the Flask app with Pydroid 3
+POSIX wrappers: `scripts/start.sh`, `scripts/stop.sh`.
 
-1. Install **Pydroid 3** from the Play Store.
-2. Pydroid → Menu → Pip → install `flask`.
-3. Copy the repository to storage (for example `Download/Needle3`).
-4. Open `app.py` in Pydroid and tap **Run**.
-5. Open `http://127.0.0.1:5000` in the phone browser.
+The server writes `.needle3/needle3.pid`, detects live instances, removes stale PID
+files, reports a busy port with a best-effort owner, and never kills arbitrary
+processes. On Windows, `stop.py` may force the recorded PID if graceful termination is
+ignored; on POSIX, `--force` is the explicit opt-in.
 
-Pydroid uses Android's native Python runtime, so the native `cactus-needle` wheel is generally unavailable; the app falls back to simulation.
+## Windows and Android
 
-### Run with Termux
+### Windows
+
+Use Python 3.11/3.12, `python -m pip`, and PowerShell. Native inference is verified on
+Windows 11 x86_64. The PID and port checks use `tasklist`/`netstat` read-only.
+
+### Termux / Android
 
 ```bash
 pkg update && pkg upgrade -y
 pkg install python git -y
 git clone https://github.com/DwaipayanDutta/Needle3.git
 cd Needle3
-python -m pip install flask
-python app.py
+python -m pip install -r requirements.txt
+NEEDLE_MODE=simulation python app.py
 ```
 
-For the native engine, set up PRoot Ubuntu inside Termux, then install `cactus-needle` there.
+Use `NEEDLE_MODE=simulation` explicitly on Bionic. For native inference, use PRoot
+Ubuntu (Python + `cactus-needle`) or a custom Bionic shared library. The browser
+sandbox works without native inference.
 
----
+Pydroid 3: install Flask via Pip, open `app.py`, run it, and use simulation mode.
+
+## Testing
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The 54 tests cover API validation and errors, health/readiness, CORS and security
+headers, sessions and TTL, tool schemas, argument validation, execution limits,
+timeouts, path traversal, native runtime state transitions (with mocked engines), and
+native call tracing. The suite does not download the model.
+
+Native smoke test (supported platform, network for first download):
+
+```bash
+python -c "import needle; print(needle.__version__)"
+NEEDLE_MODE=native NEEDLE_OPEN_BROWSER=0 python app.py
+curl -s http://127.0.0.1:5000/ready
+```
+
+UI verification: the sandbox was tested with a real native backend (Backend mode), with
+explicit backend simulation (Demo mode), and standalone from `file://` (Local demo).
+The classic page was tested against the native backend with tool cards, confidence,
+latency and session history.
 
 ## Project structure
 
 ```text
 Needle3/
-├── app.py                    # Flask launcher: sandbox at /, classic chat at /classic, /chat, /health
-├── sandbox.html              # Standalone browser sandbox (no dependencies)
-├── needle_terminal_client.py # Terminal CLI, simulation-aware
-├── needle_tools_registry.py  # Sample @needle.tool functions (not imported by app.py)
-├── requirements.txt          # Flask, plus a commented-out cactus-needle line
+├── app.py                     # WSGI app / managed server entry point
+├── sandbox.html               # Backend-connected sandbox + explicit local demo
+├── classic.html               # Classic chat UI
+├── needle_engine/
+│   ├── __init__.py
+│   ├── configuration.py       # Settings and .env loading
+│   ├── exceptions.py
+│   ├── schemas.py             # JSON Schema validation
+│   ├── tool_registry.py       # 8 safe tools and native callables
+│   ├── tool_executor.py       # Validation, timeouts, trace
+│   ├── runtime.py             # Native/simulation runtimes and states
+│   ├── sessions.py
+│   ├── agent.py               # Request orchestration and envelope
+│   ├── api.py                 # Flask app factory and routes
+│   └── server.py              # PID, port, browser, signals
+├── scripts/
+│   ├── start.py / start.sh
+│   ├── stop.py / stop.sh
+│   └── healthcheck.py
+├── tests/
+│   ├── conftest.py
+│   ├── test_api.py
+│   ├── test_engine.py
+│   ├── test_tool_registry.py
+│   ├── test_tool_execution.py
+│   ├── test_sessions.py
+│   ├── test_security.py
+│   └── test_server.py
+├── docs/
+│   ├── IMPLEMENTATION_AUDIT.md
+│   ├── ARCHITECTURE.md
+│   └── TROUBLESHOOTING.md
+├── needle_terminal_client.py  # CLI using the same engine
+├── needle_tools_registry.py   # Optional @needle.tool samples
+├── requirements.txt           # Flask + tzdata
+├── requirements-native.txt    # optional native engine
+├── requirements-dev.txt       # pytest
+├── pyproject.toml
+├── .env.example
+├── .gitignore
 └── README.md
 ```
 
-> Earlier versions of this README referenced `termux_needle.py`, `tools.py`, `.gitignore` and `LICENSE`. Those files are not present in the repository. The actual entry points are the five files above.
+## Limitations
 
----
+- Needle is a tool router; there is no general chat prose generation. `response` is a
+  rendering of real tool outputs.
+- Sessions are in-memory; restarting the server loses history.
+- Native inference is serialized; concurrent requests queue.
+- `control_device` is a simulator until a real integration is configured.
+- Android/Bionic cannot load the published native engine.
+- No streaming; no authentication; no persistent storage.
+- `confidence` is `null` for simulation and for tuned weights without a confidence head.
+- Cancel aborts the browser request; the native C engine cannot be interrupted mid-call, so a cancelled inference may still finish server-side.
 
-## Troubleshooting
-
-**`ModuleNotFoundError: No module named 'flask'`**
-Install the dependency in the active environment:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-**Port 5000 is already in use**
-Pick another port. Remember that `app.py` frees the port by terminating the process that holds it:
-
-```bash
-FLASK_PORT=8080 python app.py
-```
-
-```powershell
-$env:FLASK_PORT=8080; python app.py
-```
-
-**The sandbox returns no calls**
-That is intentional for requests no tool covers: Needle's contract is an empty call list rather than a guess. Check the query against the tool descriptions/triggers, or add a matching tool to the JSON editor. The **Calls** tab shows the reasoning.
-
-**The sandbox says “Invalid JSON”**
-The tools editor must contain a JSON array of objects, each with a `name`. Use **Format** to locate the syntax error; the run is blocked until it parses.
-
-**The sandbox is not the real model**
-Correct. It is a deterministic browser simulation with no model download. Install `cactus-needle` and use the Python API (or adapt `app.py`) for real inference.
-
-**Native engine imports but `/chat` fails**
-The bridge uses `needle.run(prompt)`, while the documented package exposes `needle.Needle(tools=[...]).run(prompt)`. Build an agent and call that instead. Also verify the wheel matches your platform.
-
-**`release_port()` killed an unrelated process**
-Startup terminates whatever is listening on the configured port. Start the app with a dedicated `FLASK_PORT`, or remove/guard the `release_port(port)` call in the main runner if that behaviour is not wanted.
-
-**The browser did not open**
-Open `http://127.0.0.1:<port>/` manually, or make sure `NEEDLE_OPEN_BROWSER` is not set to `0`. Headless and SSH machines may have no browser to launch.
-
-**`/` shows the classic chat instead of the sandbox**
-`sandbox.html` was not found next to `app.py`. Restore the file; `/` falls back to the classic UI by design.
-
-**The sandbox does not reach the Python engine**
-By design: the sandbox is browser-side. Use `/classic` or POST to `/chat` for the Flask bridge.
-
-**Android: `cactus-needle` will not install**
-Use simulation mode or run inside a Linux container. The standard wheels target desktop Linux, macOS and Windows.
-
----
+See [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) for platform and runtime fixes.
 
 ## License
 
-No `LICENSE` file is currently included in this repository. Add one before redistributing or publishing the project.
-
----
+The project metadata declares Apache-2.0, matching the upstream Needle ecosystem. No
+`LICENSE` file is currently included in this repository; add one before redistributing.
 
 ## Acknowledgements
 
-- [Cactus Compute — Needle](https://cactuscompute.com/needle) for the model, documentation and the original sandbox that inspired this one.
+- [Cactus Compute — Needle](https://cactuscompute.com/needle) for the model, documentation and sandbox inspiration.
 - [cactus-compute/needle](https://github.com/cactus-compute/needle) for the reference implementation and tool-design guidance.

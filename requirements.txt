@@ -1,2 +1,2 @@
-Flask>=3.0.0
-# cactus-needle  # Optional: Native binary wheel for compatible platforms
+Flask>=3.0.0,<4
+tzdata>=2024.1

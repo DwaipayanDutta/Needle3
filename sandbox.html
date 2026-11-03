@@ -196,6 +196,28 @@
     transition: 0.16s ease;
   }
   .mini:hover { color: var(--text); border-color: var(--line-strong); background: rgba(255, 255, 255, 0.05); }
+  .btn.ghost { background: transparent; }
+  .mode-switch {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .mode-switch button {
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 5px 8px;
+    border-radius: 6px;
+  }
+  .mode-switch button.active { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  .mode-switch button:disabled { opacity: 0.35; cursor: not-allowed; }
 
   /* ---------- layout ---------- */
   .layout {
@@ -760,6 +782,7 @@
     scrollbar-width: thin;
   }
   .tools-card textarea:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .tools-card textarea[readonly] { color: #aeb5bf; cursor: default; background: #0a0c0f; }
   .tools-card textarea.invalid { border-color: rgba(255, 123, 123, 0.5); box-shadow: 0 0 0 3px rgba(255, 123, 123, 0.08); }
   .tools-foot {
     display: flex;
@@ -889,6 +912,31 @@
   .out pre { margin: 4px 0 0; font-family: var(--mono); font-size: 10px; line-height: 1.5; color: #cfd4dc; white-space: pre-wrap; word-break: break-word; }
   .why { border-top: 1px dashed var(--line); padding-top: 10px; color: var(--muted); font-size: 10.5px; line-height: 1.55; }
   .why p { margin: 4px 0 0; }
+  .result-response {
+    margin: 14px 14px 0;
+    padding: 11px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+    font-size: 11.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+  }
+  .result-response .label { display: block; margin-bottom: 5px; }
+  .result-error {
+    margin: 14px 14px 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 123, 123, 0.35);
+    border-radius: 10px;
+    background: rgba(255, 123, 123, 0.08);
+    color: #ffb3b3;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .confidence.none .bar { opacity: 0.25; }
 
   /* ---------- presets ---------- */
   .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -978,13 +1026,17 @@
         </svg>
       </div>
       <div>
-        <div class="eyebrow">Cactus Compute · Needle 3</div>
+        <div class="eyebrow">Needle 3 · Local tool calls</div>
         <h1>Sandbox</h1>
-        <p>Tool calls, device control and extraction — simulated in your browser.</p>
+        <p>Native tool calls when the backend is available — explicit simulation when you choose it.</p>
       </div>
     </div>
     <div class="top-actions">
-      <span class="status" id="engine-status"><i></i><span>Simulation · Ready</span></span>
+      <div class="mode-switch" id="mode-switch" role="group" aria-label="Engine mode">
+        <button type="button" data-mode="backend" class="active">Backend</button>
+        <button type="button" data-mode="demo">Demo</button>
+      </div>
+      <span class="status" id="engine-status"><i></i><span>Connecting…</span></span>
       <span class="latency" id="latency">— ms</span>
       <button class="btn ghost" id="reset-btn" title="Reset environment and tools (R)">Reset</button>
     </div>
@@ -1058,7 +1110,7 @@
         <div class="card-head">
           <span class="label">Defined tools</span>
           <div class="head-actions">
-            <span class="mono muted" id="tool-count">19</span>
+            <span class="mono muted" id="tool-count">24</span>
             <button class="mini" id="format-tools">Format</button>
           </div>
         </div>
@@ -1080,9 +1132,10 @@
               <rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
             </svg>
           </button>
+          <button class="btn ghost" id="cancel" hidden>Cancel</button>
           <button class="btn primary" id="run">Run <kbd>↵</kbd></button>
         </div>
-        <div class="hint" id="hint">Try “dim the lights and play jazz” — or pick an example below.</div>
+        <div class="hint" id="hint">Try “what time is it in Kolkata?” — or pick an example below.</div>
       </article>
 
       <article class="card result-card">
@@ -1094,6 +1147,7 @@
               <button data-tab="calls" role="tab" aria-selected="false">Calls</button>
             </div>
             <button class="mini" id="copy-result">Copy</button>
+            <button class="mini" id="export-result">Export</button>
           </div>
         </div>
         <div class="result-body" id="result-body" aria-live="polite"></div>
@@ -1110,7 +1164,7 @@
   </main>
 
   <footer>
-    <span>Runs entirely in your browser · no model download, no server.</span>
+    <span>Backend mode calls your local Needle engine · Demo/standalone runs in the browser.</span>
     <span class="mono">Inspired by <a href="https://cactuscompute.com/needle" target="_blank" rel="noreferrer">Cactus Needle 3</a> · <a href="https://github.com/DwaipayanDutta/Needle3" target="_blank" rel="noreferrer">Repo</a></span>
   </footer>
 </div>
@@ -1381,18 +1435,69 @@ const DEFAULT_TOOLS = [
       required: ["text"]
     },
     triggers: ["\\b(extract|parse|pull out)\\b[\\s\\S]*\\b(invoice|receipt|booking|form)\\b"]
+  },
+  {
+    name: "extract_structured_data",
+    description: "Extract emails, amounts, dates and phone numbers from text; optionally limit the fields.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The source text." },
+        fields: { type: "array", items: { type: "string" }, description: "Optional field names." }
+      },
+      required: ["text"]
+    },
+    triggers: ["\\b(extract|pull out|find all)\\b[\\s\\S]*\\b(emails?|dates?|amounts?|phone numbers?)\\b"]
+  },
+  {
+    name: "get_system_info",
+    description: "Report safe host diagnostics: OS, Python version, CPU count, working directory and PID.",
+    parameters: { type: "object", properties: {}, required: [] },
+    triggers: ["\\b(system info|system information|os version|python version|platform|cpu count)\\b"]
+  },
+  {
+    name: "get_current_directory",
+    description: "Return the process working directory.",
+    parameters: { type: "object", properties: {}, required: [] },
+    triggers: ["\\b(current directory|working directory|where am i|pwd)\\b"]
+  },
+  {
+    name: "list_directory",
+    description: "List files and folders under the configured file root.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path, default '.'" }
+      },
+      required: []
+    },
+    triggers: ["\\b(list|show|ls|dir)\\b[\\s\\S]*\\b(files?|folder|directory|contents?)\\b"]
+  },
+  {
+    name: "search_files",
+    description: "Search file and folder names under the configured file root.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Name fragment to search for." },
+        path: { type: "string", description: "Relative path, default '.'" },
+        max_results: { type: "integer", description: "Maximum matches." }
+      },
+      required: ["query"]
+    },
+    triggers: ["\\b(find|search|look for|locate)\\b[\\s\\S]*\\b(files?|documents?|readme|folder)\\b"]
   }
 ];
 
 const PRESETS = [
-  { label: "Dim + jazz", meta: "2 calls", query: "Dim the bedroom lights to 30% and play some jazz" },
-  { label: "Morning run", meta: "3 calls", query: "Set an alarm for 7am, turn on the flashlight and tell me the time" },
-  { label: "Text Ada", meta: "1 call", query: "Send a message to Ada saying I'm running late" },
-  { label: "Find the lease", meta: "trigger route", query: "Find the lease in my documents" },
+  { label: "Time in Kolkata", meta: "1 call", query: "What time is it in Kolkata?" },
+  { label: "Dim the lights", meta: "device", query: "Dim the bedroom lights to 30%" },
   { label: "Invoice", meta: "extraction", query: "Extract the invoice: Acme charged $42.50 on 12 November" },
-  { label: "Off-topic", meta: "no call", query: "What's the weather in Bengaluru?" },
-  { label: "Screen", meta: "2 calls", query: "Dim the screen to 20% and take a screenshot" },
-  { label: "Music + timer", meta: "2 calls", query: "Pause the music and set a timer for 10 minutes" }
+  { label: "System info", meta: "1 call", query: "Show me the system information" },
+  { label: "List files", meta: "filesystem", query: "List the files in the current directory" },
+  { label: "Find README", meta: "search", query: "Find the README file" },
+  { label: "Two actions", meta: "2 calls", query: "What time is it and dim the living room lights to 20%" },
+  { label: "Off-topic", meta: "no call", query: "Tell me a joke" }
 ];
 
 /* ---------- tiny helpers ---------- */
@@ -1481,6 +1586,27 @@ function hExtract(raw, text, tools) {
   const source = (colon >= 0 ? raw.slice(colon + 1) : raw).trim();
   if (!source) return null;
   return callTool("parse_invoice_text", { text: source }, tools);
+}
+
+function hStructured(raw, text, tools) {
+  if (!/\b(extract|pull out|find all)\b/.test(text)) return null;
+  if (!/\b(emails?|dates?|amounts?|phone numbers?)\b/.test(text)) return null;
+  const colon = raw.indexOf(":");
+  const source = (colon >= 0 ? raw.slice(colon + 1) : raw).trim();
+  return callTool("extract_structured_data", { text: source || raw }, tools);
+}
+
+function hSearchFiles(raw, text, tools) {
+  if (!/\b(find|search|look for|locate)\b/.test(text)) return null;
+  if (!/\b(files?|readme|folder|documents?)\b/.test(text)) return null;
+  const match = raw.match(/\b(?:find|search for|search|look for|locate)\b\s+(.+)/i);
+  if (!match) return null;
+  const query = match[1]
+    .replace(/\b(the|a|an|file|files|document|documents|folder|in|my)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!query) return null;
+  return callTool("search_files", { query }, tools);
 }
 
 function hFindDocument(raw, text, tools) {
@@ -1587,6 +1713,28 @@ function hTime(raw, text, tools) {
   return null;
 }
 
+function hSystem(raw, text, tools) {
+  if (/\b(system info|system information|os version|operating system|python version|platform|cpu count)\b/.test(text)) {
+    return callTool("get_system_info", {}, tools);
+  }
+  return null;
+}
+
+function hCwd(raw, text, tools) {
+  if (/\b(current directory|working directory|where am i|pwd)\b/.test(text)) {
+    return callTool("get_current_directory", {}, tools);
+  }
+  return null;
+}
+
+function hList(raw, text, tools) {
+  if (!/\b(list|show|ls|dir)\b[\s\S]*\b(files?|folder|directory|contents?)\b/.test(text)) return null;
+  const match = text.match(/\b(?:in|under|inside)\s+(?:the\s+)?([\w./-]+)/);
+  let path = match ? match[1] : ".";
+  if (["current", "current-directory", "directory"].includes(path.toLowerCase())) path = ".";
+  return callTool("list_directory", { path }, tools);
+}
+
 function hToggleSetting(raw, text, tools) {
   const found = findSettings(text);
   if (!found.length) return null;
@@ -1673,6 +1821,8 @@ const HANDLERS = [
   hSpeak,
   hSendMessage,
   hExtract,
+  hStructured,
+  hSearchFiles,
   hFindDocument,
   hOpenWebsite,
   hOpenApp,
@@ -1682,6 +1832,9 @@ const HANDLERS = [
   hStopTimer,
   hSetTimer,
   hTime,
+  hSystem,
+  hList,
+  hCwd,
   hToggleSetting,
   hAdjustSetting,
   hSetBrightness,
@@ -1885,6 +2038,40 @@ function execute(name, args = {}) {
       return `Speaking: \u201c${args.text}\u201d`;
     case "find_document":
       return `Found 3 matches for \u201c${args.query}\u201d: Lease_2026.pdf, Lease_draft.pdf, Move_in_notes.pdf.`;
+    case "extract_structured_data": {
+      const text = String(args.text || "");
+      const emails = [...new Set(text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/g) || [])];
+      const amounts = [...new Set(text.match(/[$\u20ac\u00a3\u20b9]?\s*\d[\d,]*(?:\.\d{1,2})?/g) || [])];
+      const dates = [...new Set(text.match(/\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+\d{4})?\b/gi) || [])];
+      return JSON.stringify({ status: "extracted", fields: { emails, amounts, dates }, source_length: text.length, simulated: true }, null, 2);
+    }
+    case "get_system_info":
+      return JSON.stringify({
+        system: navigator.platform || "browser",
+        user_agent: navigator.userAgent,
+        language: navigator.language,
+        hardware_concurrency: navigator.hardwareConcurrency || null,
+        simulated: true
+      }, null, 2);
+    case "get_current_directory":
+      return JSON.stringify({ cwd: "/workspace (browser demo)", simulated: true }, null, 2);
+    case "list_directory":
+      return JSON.stringify({
+        path: args.path || ".",
+        entries: [
+          { name: "sandbox.html", type: "file", size: null },
+          { name: "README.md", type: "file", size: null },
+          { name: "app.py", type: "file", size: null },
+          { name: "needle_engine", type: "dir", size: null }
+        ],
+        simulated: true
+      }, null, 2);
+    case "search_files":
+      return JSON.stringify({
+        query: args.query,
+        results: [{ path: "README.md", size: null }],
+        simulated: true
+      }, null, 2);
     default:
       return `Executed ${name}.`;
   }
@@ -1917,16 +2104,14 @@ function buildResponse(query, tools) {
   const results = calls.map((call) => ({
     name: call.name,
     arguments: call.arguments,
+    ok: true,
+    status: "ok",
     output: execute(call.name, call.arguments)
   }));
-
-  const confidence = calls.length
-    ? strategy === "fallback"
-      ? 0.57
-      : strategy === "clauses" || strategy === "whole"
-        ? 0.95
-        : 0.92
-    : 0.08;
+  const response = results.map((result) => {
+    const output = typeof result.output === "string" ? result.output : JSON.stringify(result.output);
+    return `${result.name}: ${output}`;
+  }).join("\n");
 
   return {
     type: calls.length ? "call" : "none",
@@ -1934,10 +2119,13 @@ function buildResponse(query, tools) {
     error: null,
     error_code: null,
     function_calls: calls,
+    suppressed_calls: [],
     reasoning: reasoningFor(query, calls, strategy),
-    confidence,
+    confidence: null,
     results,
+    response,
     mode: "simulation",
+    simulated: true,
     latency_ms: Math.max(2, Math.round(performance.now() - started)),
     tools_considered: tools.length
   };
@@ -1986,10 +2174,16 @@ const els = {
   sheetBody: $id("sheet-body"),
   sheetClose: $id("sheet-close"),
   sheetBackdrop: $id("sheet-backdrop"),
-  flash: $id("flash")
+  flash: $id("flash"),
+  modeSwitch: $id("mode-switch"),
+  cancel: $id("cancel"),
+  export: $id("export-result")
 };
 
 const TRACKS = ["jazz", "lo-fi beats", "ambient focus", "city pop", "classical"];
+
+const IS_HTTP = location.protocol === "http:" || location.protocol === "https:";
+const SESSION_KEY = "needle3.sandbox.session";
 
 let state;
 let activeTab = "json";
@@ -1997,6 +2191,19 @@ let lastData = null;
 let appEls = [];
 let bannerTimer = null;
 let toolsTimer = null;
+let backend = null;
+let backendTools = null;
+let currentMode = IS_HTTP ? "backend" : "demo";
+let sessionId = null;
+let inflight = null;
+let lastStatus = { text: "Connecting…", busy: false };
+let statusPoll = null;
+
+try {
+  sessionId = localStorage.getItem(SESSION_KEY);
+} catch (error) {
+  sessionId = null;
+}
 
 function initialState() {
   return {
@@ -2020,6 +2227,9 @@ function initialState() {
     screenshot: null,
     docs: null,
     note: null,
+    fileOutput: null,
+    systemInfo: null,
+    clock: null,
     device: null,
     app: "home",
     browser: null,
@@ -2118,14 +2328,10 @@ function sheetContent(appName) {
       return `<div class="thread"><div class="bubble">${esc(state.message.text)}</div><div class="thread-meta">To ${esc(state.message.recipient)} · delivered</div></div>`;
 
     case "Files": {
-      if (!state.docs) {
-        return `<div class="sheet-placeholder">${icon("files", 32)}<strong>Files</strong><span>Search documents with a request like “find the lease”.</span></div>`;
+      if (state.fileOutput) {
+        return `<pre class="sheet-pre">${esc(state.fileOutput)}</pre>`;
       }
-      const query = state.docs.query;
-      return `
-        <div class="file-row"><span class="file-icon">PDF</span><div><strong>Lease_2026.pdf</strong><span>Matches “${esc(query)}” · 2.4 MB</span></div></div>
-        <div class="file-row"><span class="file-icon">PDF</span><div><strong>Lease_draft.pdf</strong><span>Matches “${esc(query)}” · 1.1 MB</span></div></div>
-        <div class="file-row"><span class="file-icon">TXT</span><div><strong>Move_in_notes.txt</strong><span>Matches “${esc(query)}” · 8 KB</span></div></div>`;
+      return `<div class="sheet-placeholder">${icon("files", 32)}<strong>Files</strong><span>Ask to list or search files to see the real backend output.</span></div>`;
     }
 
     case "Notes":
@@ -2134,11 +2340,18 @@ function sheetContent(appName) {
       }
       return `<pre class="sheet-pre">${esc(state.note)}</pre>`;
 
+    case "Settings":
+      if (!state.systemInfo) {
+        return `<div class="sheet-placeholder">${icon("settings", 32)}<strong>Settings</strong><span>Ask for system information to see real diagnostics.</span></div>`;
+      }
+      return `<pre class="sheet-pre">${esc(state.systemInfo)}</pre>`;
+
     case "Clock":
       return `
         <div class="clock-big">${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
         <div class="clock-row"><span>Alarm</span><strong>${esc(state.alarm || "—")}</strong></div>
-        <div class="clock-row"><span>Timer</span><strong>${esc(state.timer || "—")}</strong></div>`;
+        <div class="clock-row"><span>Timer</span><strong>${esc(state.timer || "—")}</strong></div>
+        ${state.clock ? `<pre class="sheet-pre" style="margin-top:12px">${esc(state.clock)}</pre>` : ""}`;
 
     case "Camera":
       return `<div class="photo-frame">${state.photo ? "Captured just now" : "No photo yet"}</div>`;
@@ -2190,26 +2403,31 @@ function addActivity(text) {
 }
 
 function activityLabel(name, args, output) {
+  const text = textOutput(output);
   if (name === "parse_invoice_text") {
     try {
-      const parsed = JSON.parse(output);
-      return `Extracted ${parsed.merchant || "record"} · ${parsed.currency} ${parsed.amount != null ? parsed.amount : "—"}`;
+      const parsed = typeof output === "string" ? JSON.parse(output) : output;
+      return `Extracted ${parsed.merchant || "record"} · ${parsed.currency || ""} ${parsed.amount != null ? parsed.amount : "—"}`.trim();
     } catch (error) {
       return "Extraction complete";
     }
   }
-  if (name === "find_document") return `Searched files for “${args.query}”`;
+  if (name === "extract_structured_data") return "Extracted structured data";
+  if (name === "find_document" || name === "search_files") return `Searched for “${args.query}”`;
   if (name === "send_message") return `Texted ${args.recipient}`;
   if (name === "control_device") return `${cap(args.device)} → ${args.action}`;
   if (name === "toggle_setting") return `${cap(args.setting)} → ${args.state}`;
   if (name === "get_current_time") return "Read the clock";
-  return output.split("\n")[0];
+  if (name === "get_system_info") return "Read system info";
+  if (name === "get_current_directory") return "Read working directory";
+  if (name === "list_directory") return "Listed files";
+  return text.split("\n")[0] || name;
 }
 
 function applyEffects(calls, results) {
   calls.forEach((call, index) => {
     const args = call.arguments || {};
-    const output = results[index] ? results[index].output : "";
+    const output = results[index] ? results[index].output : null;
 
     switch (call.name) {
       case "set_brightness":
@@ -2229,6 +2447,7 @@ function applyEffects(calls, results) {
         break;
       case "control_device":
         state.device = `${args.device} · ${args.action}${args.value != null ? ` ${args.value}%` : ""}`;
+        showBanner("settings", args.device || "Device", `${args.action}${args.value != null ? ` ${args.value}%` : ""}`);
         break;
       case "open_app":
         state.app = args.name || "home";
@@ -2269,11 +2488,26 @@ function applyEffects(calls, results) {
         break;
       case "find_document":
         state.docs = { query: args.query };
+        state.fileOutput = textOutput(output);
+        state.app = "Files";
+        break;
+      case "search_files":
+      case "list_directory":
+      case "get_current_directory":
+        state.fileOutput = textOutput(output);
         state.app = "Files";
         break;
       case "parse_invoice_text":
-        state.note = output;
+        state.note = textOutput(output);
         state.app = "Notes";
+        break;
+      case "extract_structured_data":
+        state.note = textOutput(output);
+        state.app = "Notes";
+        break;
+      case "get_system_info":
+        state.systemInfo = textOutput(output);
+        state.app = "Settings";
         break;
       case "take_photo":
         state.photo = new Date();
@@ -2284,6 +2518,7 @@ function applyEffects(calls, results) {
         fireFlash();
         break;
       case "get_current_time":
+        state.clock = textOutput(output);
         state.app = "Clock";
         break;
       default:
@@ -2314,27 +2549,44 @@ function highlight(json) {
 }
 
 function callsHTML(data) {
-  if (!data.function_calls.length) {
-    return `<div class="empty-state"><span class="empty-glyph">∅</span><p>No call.</p><p class="sub">The engine refused rather than guessing — an empty list is the contract.</p><div class="why" style="border:0;padding-top:6px"><p>${esc(data.reasoning)}</p></div></div>`;
+  const parts = [];
+  if (data.response) {
+    parts.push(`<div class="result-response"><span class="label">Response</span>${esc(data.response)}</div>`);
+  }
+  if (data.error) {
+    parts.push(`<div class="result-error">${esc(data.error)}</div>`);
   }
 
-  const confidence = Math.round(data.confidence * 100);
-  const cards = data.function_calls.map((call, index) => {
+  const calls = data.function_calls || [];
+  const results = data.results || [];
+  if (!calls.length) {
+    parts.push(`<div class="empty-state"><span class="empty-glyph">∅</span><p>No call.</p><p class="sub">${esc(data.reasoning || "The engine returned an empty call list.")}</p></div>`);
+    return parts.join("");
+  }
+
+  const confidence = typeof data.confidence === "number"
+    ? `<div class="confidence"><span>Confidence</span><span class="bar"><span style="width:${Math.round(data.confidence * 100)}%"></span></span><span>${data.confidence.toFixed(2)}</span></div>`
+    : `<div class="confidence none"><span>Confidence</span><span class="bar"><span style="width:0%"></span></span><span>not reported</span></div>`;
+
+  const cards = calls.map((call, index) => {
     const args = Object.entries(call.arguments || {}).map(([key, value]) => (
       `<span class="arg"><span class="k">${esc(key)}</span><span class="v">${esc(JSON.stringify(value))}</span></span>`
     )).join("");
-    const output = data.results[index] ? data.results[index].output : "";
+    const result = results[index];
+    const output = result ? textOutput(result.output) : "";
+    const status = result && result.ok === false ? "ERROR" : "RESULT";
     return `<div class="call">
       <div class="call-head"><span class="idx">${String(index + 1).padStart(2, "0")}</span><span class="name">${esc(call.name)}</span><span class="pill-call">CALL</span></div>
       <div class="args">${args || '<span class="arg"><span class="v">no arguments</span></span>'}</div>
-      <div class="out"><span class="out-label">RESULT</span><pre>${esc(output)}</pre></div>
+      <div class="out"><span class="out-label">${status}</span><pre>${esc(output || (result && result.error) || "")}</pre></div>
     </div>`;
   }).join("");
 
-  return `
-    <div class="confidence"><span>Confidence</span><span class="bar"><span style="width:${confidence}%"></span></span><span>${data.confidence.toFixed(2)}</span></div>
-    ${cards}
-    <div class="why"><span class="label">Why</span><p>${esc(data.reasoning)}</p></div>`;
+  parts.push(confidence, cards);
+  if (data.reasoning) {
+    parts.push(`<div class="why"><span class="label">Why</span><p>${esc(data.reasoning)}</p></div>`);
+  }
+  return parts.join("");
 }
 
 function renderResult(data) {
@@ -2352,13 +2604,22 @@ function renderResult(data) {
 /* ---------- controls ---------- */
 
 function setStatus(text, busy = false) {
+  lastStatus = { text, busy };
   els.statusText.textContent = text;
   els.status.classList.toggle("busy", busy);
 }
 
-function setBusy(busy) {
+function setBusy(busy, canCancel = false) {
   els.run.disabled = busy;
-  setStatus(busy ? "Simulation · Thinking" : "Simulation · Ready", busy);
+  els.cancel.hidden = !(busy && canCancel);
+  if (busy) {
+    els.statusText.textContent = currentMode === "backend" ? "Backend · Thinking" : "Local demo · Thinking";
+    els.status.classList.add("busy");
+  } else {
+    els.statusText.textContent = lastStatus.text;
+    els.status.classList.toggle("busy", lastStatus.busy);
+    inflight = null;
+  }
 }
 
 function setHint(text, isError = false) {
@@ -2383,7 +2644,9 @@ function validateTools(announce = false) {
     els.tools.classList.remove("invalid");
     els.toolCount.textContent = `${tools.length} tool${tools.length === 1 ? "" : "s"}`;
     els.toolsMsg.className = "";
-    els.toolsMsg.textContent = announce ? `Valid JSON · ${tools.length} tools` : "Edit the schemas, then run a request.";
+    els.toolsMsg.textContent = els.tools.readOnly
+      ? "Backend registry · read-only in Backend mode."
+      : (announce ? `Valid JSON · ${tools.length} tools` : "Edit the schemas, then run a request.");
     return tools;
   } catch (error) {
     els.tools.classList.add("invalid");
@@ -2391,6 +2654,124 @@ function validateTools(announce = false) {
     els.toolsMsg.className = "err";
     els.toolsMsg.textContent = `Invalid JSON · ${error.message}`;
     return null;
+  }
+}
+
+function textOutput(value) {
+  if (value === undefined || value === null) return "";
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function setStatusFromEngine(engine) {
+  if (!engine) {
+    setStatus("Unavailable");
+    return;
+  }
+  if (engine.mode === "native") {
+    if (engine.state === "ready") setStatus("Native · Ready");
+    else if (engine.state === "initializing") setStatus("Native · Initializing", true);
+    else if (engine.state === "busy") setStatus("Native · Busy", true);
+    else setStatus("Native · Unavailable");
+  } else if (engine.mode === "simulation") {
+    setStatus("Simulation · Ready");
+  } else {
+    setStatus("Unavailable");
+  }
+}
+
+function updateModeButtons() {
+  els.modeSwitch.querySelectorAll("button[data-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === currentMode);
+    if (button.dataset.mode === "backend") {
+      button.disabled = !IS_HTTP || !backend;
+    }
+  });
+}
+
+function startStatusPoll() {
+  if (statusPoll) clearInterval(statusPoll);
+  statusPoll = setInterval(async () => {
+    try {
+      const response = await fetch("/api/status", { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      backend = await response.json();
+      setStatusFromEngine(backend.engine);
+      if (backend.engine && backend.engine.state !== "initializing") {
+        clearInterval(statusPoll);
+        statusPoll = null;
+      }
+    } catch (error) {
+      clearInterval(statusPoll);
+      statusPoll = null;
+    }
+  }, 2500);
+}
+
+function applyBackendTools() {
+  if (!backendTools) return;
+  els.tools.readOnly = true;
+  els.formatTools.disabled = true;
+  els.tools.value = JSON.stringify(backendTools, null, 2);
+  els.toolCount.textContent = `${backendTools.length} tool${backendTools.length === 1 ? "" : "s"}`;
+  els.toolsMsg.className = "";
+  els.toolsMsg.textContent = "Backend registry · read-only in Backend mode.";
+  els.tools.classList.remove("invalid");
+}
+
+function applyLocalTools() {
+  els.tools.readOnly = false;
+  els.formatTools.disabled = false;
+  els.tools.value = JSON.stringify(DEFAULT_TOOLS, null, 2);
+  validateTools();
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  updateModeButtons();
+  if (mode === "backend") {
+    if (backendTools) applyBackendTools();
+    if (backend) {
+      setStatusFromEngine(backend.engine);
+      if (backend.engine && backend.engine.state === "initializing") startStatusPoll();
+    }
+  } else {
+    if (IS_HTTP && backendTools) applyBackendTools();
+    else applyLocalTools();
+    setStatus(IS_HTTP ? "Simulation · Demo" : "Local demo · Ready");
+  }
+}
+
+async function loadBackend() {
+  if (!IS_HTTP) {
+    currentMode = "demo";
+    updateModeButtons();
+    applyLocalTools();
+    setStatus("Local demo · Ready");
+    return;
+  }
+  try {
+    const response = await fetch("/api/status", { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    backend = await response.json();
+    backendTools = (backend.tools || []).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      ...(tool.triggers ? { triggers: tool.triggers } : {})
+    }));
+    currentMode = "backend";
+    updateModeButtons();
+    applyBackendTools();
+    setStatusFromEngine(backend.engine);
+    if (backend.engine && backend.engine.state === "initializing") startStatusPoll();
+  } catch (error) {
+    backend = null;
+    backendTools = null;
+    currentMode = "demo";
+    updateModeButtons();
+    applyLocalTools();
+    setStatus("Backend unavailable · local demo");
+    setHint("Backend not reachable; using the local demo engine. Start `python app.py` for native inference.", true);
   }
 }
 
@@ -2405,6 +2786,86 @@ async function run() {
     return;
   }
 
+  if (currentMode === "backend" && IS_HTTP) {
+    return runBackend(query, "auto");
+  }
+  if (currentMode === "demo" && IS_HTTP && backend) {
+    return runBackend(query, "simulation");
+  }
+  return runLocal(query);
+}
+
+async function runBackend(query, mode) {
+  setHint(mode === "simulation" ? "Running the explicit backend simulation…" : "Waiting for the backend engine…");
+  setBusy(true, true);
+  inflight = new AbortController();
+  const started = performance.now();
+
+  try {
+    const response = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ prompt: query, session_id: sessionId, mode }),
+      signal: inflight.signal
+    });
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      data = null;
+    }
+
+    if (!response.ok) {
+      const message = (data && data.error) || `Backend returned HTTP ${response.status}`;
+      lastData = data || {
+        success: false,
+        mode,
+        response: "",
+        function_calls: [],
+        results: [],
+        error: message
+      };
+      renderResult(lastData);
+      setHint(message, true);
+      setStatus(data && data.error_code === "engine_unavailable" ? "Backend · Unavailable" : "Backend · Error");
+      return;
+    }
+
+    if (data.session_id) {
+      sessionId = data.session_id;
+      try {
+        localStorage.setItem(SESSION_KEY, sessionId);
+      } catch (error) {
+        /* private mode */
+      }
+    }
+    data.latency_ms = data.latency_ms != null ? data.latency_ms : Math.round(performance.now() - started);
+    lastData = data;
+    els.latency.textContent = `${Math.round(data.latency_ms)} ms`;
+    renderResult(data);
+    applyEffects(data.function_calls || [], data.results || []);
+
+    const count = (data.function_calls || []).length;
+    if (count) {
+      setHint(`${count} call${count > 1 ? "s" : ""} · ${data.mode}${typeof data.confidence === "number" ? ` · confidence ${data.confidence.toFixed(2)}` : ""}`);
+    } else {
+      setHint(data.error || "No call. The engine refused rather than guessing.", Boolean(data.error));
+    }
+    setStatusFromEngine({ mode: data.mode, state: "ready" });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      setHint("Request cancelled.");
+      setStatus("Backend · Ready");
+    } else {
+      setHint(`Backend request failed: ${error.message}`, true);
+      setStatus("Backend · Unavailable");
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runLocal(query) {
   const tools = validateTools();
   if (!tools) {
     els.tools.focus();
@@ -2412,28 +2873,25 @@ async function run() {
     return;
   }
 
-  setHint("Matching the request against the defined tools…");
-  setBusy(true);
-  const started = performance.now();
-
+  setHint("Matching the request against the local demo tools…");
+  setBusy(true, false);
   try {
-    await sleep(170 + Math.random() * 230);
+    await sleep(140 + Math.random() * 180);
     const data = buildResponse(query, tools);
-    data.latency_ms = Math.max(data.latency_ms, Math.round(performance.now() - started));
     lastData = data;
-    els.latency.textContent = `${data.latency_ms} ms`;
-
+    els.latency.textContent = `${Math.round(data.latency_ms)} ms`;
     renderResult(data);
     applyEffects(data.function_calls, data.results);
 
     const count = data.function_calls.length;
     setHint(count
-      ? `${count} call${count > 1 ? "s" : ""} planned · confidence ${data.confidence.toFixed(2)}`
-      : "No call. The engine refused rather than guessing.");
+      ? `${count} simulated call${count > 1 ? "s" : ""}`
+      : "No call. The local demo engine refused rather than guessing.");
+    setStatus("Local demo · Ready");
   } catch (error) {
     console.error(error);
-    setHint(`Engine error: ${error.message}`, true);
-    setStatus("Simulation · Error");
+    setHint(`Local demo error: ${error.message}`, true);
+    setStatus("Local demo · Error");
   } finally {
     setBusy(false);
   }
@@ -2451,14 +2909,32 @@ function resetAll() {
     button.setAttribute("aria-selected", String(on));
   });
 
-  els.tools.value = JSON.stringify(DEFAULT_TOOLS, null, 2);
-  validateTools();
+  if (backendTools && (currentMode === "backend" || IS_HTTP)) applyBackendTools();
+  else applyLocalTools();
+
   els.query.value = "";
   els.latency.textContent = "— ms";
   els.result.innerHTML = emptyResultHTML();
   els.activity.innerHTML = '<li class="empty">Waiting for a request…</li>';
-  setHint("Try “dim the lights and play jazz” — or pick an example below.");
-  setStatus("Simulation · Ready");
+  setHint("Try “what time is it in Kolkata?” — or pick an example below.");
+  if (currentMode === "backend" && backend) setStatusFromEngine(backend.engine);
+  else setStatus(IS_HTTP ? "Simulation · Demo" : "Local demo · Ready");
+
+  if (sessionId && IS_HTTP) {
+    fetch("/chat/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId })
+    }).catch(() => {
+      sessionId = null;
+      try {
+        localStorage.removeItem(SESSION_KEY);
+      } catch (error) {
+        /* private mode */
+      }
+    });
+  }
+
   renderPhone();
   els.query.focus();
 }
@@ -2487,6 +2963,7 @@ function tick() {
 
 function init() {
   state = initialState();
+  setStatus("Connecting…");
   els.tools.value = JSON.stringify(DEFAULT_TOOLS, null, 2);
   renderApps();
   renderQuick();
@@ -2500,6 +2977,32 @@ function init() {
   els.run.addEventListener("click", run);
   els.reset.addEventListener("click", resetAll);
 
+  els.cancel.addEventListener("click", () => {
+    if (inflight) inflight.abort();
+  });
+
+  els.modeSwitch.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-mode]");
+    if (!button || button.disabled || button.dataset.mode === currentMode) return;
+    setMode(button.dataset.mode);
+  });
+
+  els.export.addEventListener("click", () => {
+    if (!lastData) {
+      setHint("Run a request first.", true);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(lastData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `needle3-result-${Date.now()}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
   els.query.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -2507,7 +3010,7 @@ function init() {
     }
   });
   els.query.addEventListener("input", () => {
-    setHint("Try “dim the lights and play jazz” — or pick an example below.");
+    setHint("Try “what time is it in Kolkata?” — or pick an example below.");
   });
 
   els.quick.addEventListener("click", (event) => {
@@ -2578,28 +3081,29 @@ function init() {
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
+    const readyStatus = () => setStatus(currentMode === "backend" ? "Backend · Ready" : "Local demo · Ready");
     els.mic.addEventListener("click", () => {
       const recognition = new SpeechRecognition();
       recognition.lang = "en-US";
       recognition.interimResults = false;
       recognition.maxAlternatives = 1;
       els.mic.classList.add("listening");
-      setStatus("Simulation · Listening", true);
+      setStatus(currentMode === "backend" ? "Backend · Listening" : "Local demo · Listening", true);
 
       recognition.onresult = (event) => {
         els.query.value = event.results[0][0].transcript;
         els.mic.classList.remove("listening");
-        setStatus("Simulation · Ready");
+        readyStatus();
         run();
       };
       recognition.onerror = () => {
         els.mic.classList.remove("listening");
-        setStatus("Simulation · Ready");
+        readyStatus();
         setHint("Microphone unavailable — type the request instead.", true);
       };
       recognition.onend = () => {
         els.mic.classList.remove("listening");
-        setStatus("Simulation · Ready");
+        readyStatus();
       };
 
       recognition.start();
@@ -2624,6 +3128,8 @@ function init() {
       resetAll();
     }
   });
+
+  loadBackend();
 }
 
 init();

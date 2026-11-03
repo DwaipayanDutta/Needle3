@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<title>Needle 3 · Classic Chat</title>
+<style>
+  :root {
+    --red: #d9232a;
+    --red-dark: #b51d23;
+    --ink: #17181b;
+    --muted: #6b7078;
+    --line: #e6e8ec;
+    --panel: #ffffff;
+    --soft: #f4f5f7;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background:
+      radial-gradient(900px 500px at 10% -10%, rgba(255, 255, 255, 0.18), transparent 60%),
+      var(--red);
+    color: var(--ink);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100dvh;
+    display: flex;
+    justify-content: center;
+    padding: 18px;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  ::selection { background: var(--ink); color: #fff; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .app {
+    width: 100%;
+    max-width: 760px;
+    height: calc(100dvh - 36px);
+    min-height: 560px;
+    background: var(--panel);
+    border-radius: 18px;
+    box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.03);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 3px solid var(--red);
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .logo {
+    width: 38px; height: 38px; border-radius: 11px;
+    background: var(--red); color: #fff;
+    display: grid; place-items: center;
+    box-shadow: 0 8px 18px -8px rgba(217, 35, 42, 0.7);
+  }
+  .brand h1 { margin: 0; font-size: 18px; letter-spacing: 0.06em; font-weight: 850; color: var(--red); line-height: 1.05; }
+  .brand p { margin: 2px 0 0; font-size: 10px; color: var(--muted); letter-spacing: 0.02em; }
+  .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .badge {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 6px 9px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); background: var(--soft); white-space: nowrap;
+  }
+  .badge.native { color: #166534; background: #eaf8ef; border-color: #bbebcb; }
+  .badge.sim { color: #8a5a00; background: #fff7e5; border-color: #f2d18a; }
+  .badge.off { color: var(--red); background: #fff0f0; border-color: #ffc9c9; }
+  select, .ghost {
+    border: 1px solid var(--line); background: var(--soft); border-radius: 9px;
+    padding: 7px 9px; font-size: 11px; color: var(--ink);
+  }
+  .ghost:hover { background: #eceef2; }
+  .ghost:disabled { opacity: 0.5; cursor: progress; }
+
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background:
+      linear-gradient(180deg, rgba(244, 245, 247, 0.65), transparent 170px),
+      #fff;
+    scroll-behavior: smooth;
+  }
+  .empty {
+    margin: auto;
+    text-align: center;
+    max-width: 440px;
+    color: var(--muted);
+  }
+  .empty h2 { margin: 0 0 6px; color: var(--ink); font-size: 19px; letter-spacing: -0.02em; }
+  .empty p { margin: 0 0 16px; font-size: 12.5px; }
+  .empty-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; text-align: left; }
+  .empty-chip {
+    border: 1px solid var(--line); background: #fff; border-radius: 10px;
+    padding: 9px 10px; font-size: 10.5px; color: var(--ink); text-align: left;
+    transition: 0.15s ease;
+  }
+  .empty-chip:hover { border-color: #f0a3a6; background: #fff7f7; transform: translateY(-1px); }
+  .empty-chip span { display: block; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 8px; color: var(--muted); margin-top: 3px; letter-spacing: 0.06em; text-transform: uppercase; }
+
+  .msg { display: flex; flex-direction: column; gap: 4px; max-width: 86%; }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.bot { align-self: flex-start; align-items: flex-start; }
+  .bubble {
+    padding: 10px 13px; border-radius: 13px; font-size: 13px; line-height: 1.5;
+    word-break: break-word; white-space: pre-wrap;
+  }
+  .msg.user .bubble { background: var(--red); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.bot .bubble { background: var(--soft); color: var(--ink); border-bottom-left-radius: 4px; }
+  .bubble code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.92em; }
+  .meta {
+    display: flex; align-items: center; gap: 8px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 8px; color: var(--muted); letter-spacing: 0.04em;
+  }
+  .copy {
+    border: 0; background: none; color: var(--muted); font-family: inherit;
+    font-size: 8px; letter-spacing: 0.04em; padding: 0; text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .copy:hover { color: var(--ink); }
+
+  .tools { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+  .tool {
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff;
+    font-size: 10px;
+  }
+  .tool-head { display: flex; align-items: center; gap: 8px; padding: 7px 9px; background: #fafbfc; border-bottom: 1px solid var(--line); }
+  .tool-name { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; font-weight: 700; color: var(--ink); flex: 1; }
+  .tool-status { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 7.5px; letter-spacing: 0.1em; color: #166534; }
+  .tool-status.err { color: var(--red); }
+  .tool pre {
+    margin: 0; padding: 8px 9px; font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 9.5px; line-height: 1.5; color: #3a3f47; white-space: pre-wrap;
+    word-break: break-word; max-height: 230px; overflow: auto;
+  }
+  .tool details { border-top: 1px solid var(--line); }
+  .tool summary { padding: 6px 9px; cursor: pointer; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .tool .out { background: #fcfcfd; }
+  .why { width: 100%; border: 1px dashed var(--line); border-radius: 9px; padding: 7px 9px; font-size: 9.5px; color: var(--muted); }
+  .why summary { cursor: pointer; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .why p { margin: 5px 0 0; }
+
+  .notice {
+    align-self: stretch; border-radius: 10px; padding: 9px 11px; font-size: 11px;
+    border: 1px solid #ffc9c9; background: #fff4f4; color: #9f1d23;
+  }
+  .loading { display: inline-flex; gap: 3px; align-items: center; color: var(--muted); font-size: 11px; }
+  .loading i { width: 4px; height: 4px; border-radius: 50%; background: var(--red); animation: bounce 1s infinite ease-in-out; }
+  .loading i:nth-child(2) { animation-delay: 0.15s; }
+  .loading i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bounce { 50% { transform: translateY(-3px); opacity: 0.5; } }
+
+  footer { border-top: 1px solid var(--line); padding: 12px 14px 10px; background: #fff; }
+  .chips { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: thin; }
+  .chip {
+    border: 1px solid var(--line); background: var(--soft); border-radius: 999px;
+    padding: 5px 9px; font-size: 9.5px; white-space: nowrap; color: var(--muted);
+  }
+  .chip:hover { color: var(--red); border-color: #f0a3a6; background: #fff7f7; }
+  form { display: flex; gap: 7px; }
+  #prompt {
+    flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; font-size: 13px; outline: none; background: #fff;
+  }
+  #prompt:focus { border-color: var(--red); box-shadow: 0 0 0 3px rgba(217, 35, 42, 0.08); }
+  #send {
+    border: 0; background: var(--red); color: #fff; border-radius: 10px;
+    padding: 0 16px; font-weight: 700; font-size: 12px; min-width: 72px;
+  }
+  #send:hover { background: var(--red-dark); }
+  #send:disabled { opacity: 0.55; cursor: progress; }
+  .foot-meta { display: flex; justify-content: space-between; gap: 10px; margin-top: 7px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 8px; color: var(--muted); letter-spacing: 0.04em; }
+  .foot-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  @media (max-width: 620px) {
+    body { padding: 0; background: #fff; }
+    .app { height: 100dvh; min-height: 0; border-radius: 0; box-shadow: none; max-width: none; }
+    header { padding: 11px 13px; }
+    #chat { padding: 13px; }
+    .empty-grid { grid-template-columns: 1fr; }
+    .msg { max-width: 94%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M5 20 18 4" /><ellipse cx="16.6" cy="6.2" rx="2.6" ry="1.5" transform="rotate(-52 16.6 6.2)" />
+          <path d="M5 20l3.2-1.1-2.1-2.1z" fill="currentColor" stroke="none" />
+        </svg>
+      </div>
+      <div>
+        <h1>NEEDLE 3</h1>
+        <p>Classic chat · local backend</p>
+      </div>
+    </div>
+    <div class="controls">
+      <span class="badge" id="mode-badge">CONNECTING</span>
+      <select id="mode-select" aria-label="Engine mode">
+        <option value="auto">Auto</option>
+        <option value="simulation">Demo (simulation)</option>
+      </select>
+      <button class="ghost" id="clear" type="button">Clear</button>
+    </div>
+  </header>
+
+  <main id="chat" aria-live="polite"></main>
+
+  <footer>
+    <div class="chips" id="chips">
+      <button class="chip" data-prompt="What time is it in Kolkata?">Time in Kolkata</button>
+      <button class="chip" data-prompt="Dim the bedroom lights to 30%">Dim the lights</button>
+      <button class="chip" data-prompt="Extract the invoice: Acme charged $42.50 on 12 November">Extract invoice</button>
+      <button class="chip" data-prompt="List the files in the current directory">List files</button>
+      <button class="chip" data-prompt="Find the README file">Find README</button>
+      <button class="chip" data-prompt="Tell me a joke">Off-topic</button>
+    </div>
+    <form id="form">
+      <input id="prompt" type="text" placeholder="Ask Needle to do something…" autocomplete="off" spellcheck="false" />
+      <button id="send" type="submit">Send</button>
+    </form>
+    <div class="foot-meta">
+      <span id="session-label">session · new</span>
+      <span id="latency-label">—</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const chat = $("chat");
+  const form = $("form");
+  const promptInput = $("prompt");
+  const sendButton = $("send");
+  const clearButton = $("clear");
+  const modeSelect = $("mode-select");
+  const modeBadge = $("mode-badge");
+  const sessionLabel = $("session-label");
+  const latencyLabel = $("latency-label");
+
+  const STORAGE_KEY = "needle3.classic.session";
+  let sessionId = null;
+  try {
+    sessionId = localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    sessionId = null;
+  }
+  let busy = false;
+  let loadingEl = null;
+  let statusTimer = null;
+
+  const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[char]));
+
+  const timeLabel = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  function shortSession() {
+    return sessionId ? `session · ${sessionId.slice(0, 8)}` : "session · new";
+  }
+
+  function setMode(mode, state = "ready") {
+    modeBadge.className = "badge";
+    if (mode === "native" && state !== "unavailable") {
+      modeBadge.textContent = "NATIVE · READY";
+      modeBadge.classList.add("native");
+    } else if (mode === "native" && state === "unavailable") {
+      modeBadge.textContent = "NATIVE · UNAVAILABLE";
+      modeBadge.classList.add("off");
+    } else if (mode === "simulation") {
+      modeBadge.textContent = "SIMULATION · DEMO";
+      modeBadge.classList.add("sim");
+    } else if (state === "unavailable") {
+      modeBadge.textContent = "UNAVAILABLE";
+      modeBadge.classList.add("off");
+    } else {
+      modeBadge.textContent = "CONNECTING";
+    }
+  }
+
+  function addMessage(role, text) {
+    const wrapper = document.createElement("div");
+    wrapper.className = `msg ${role}`;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const stamp = document.createElement("span");
+    stamp.textContent = timeLabel();
+    meta.appendChild(stamp);
+    if (role === "bot") {
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "copy";
+      copy.textContent = "copy";
+      copy.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          copy.textContent = "copied";
+          setTimeout(() => { copy.textContent = "copy"; }, 1200);
+        } catch (error) {
+          copy.textContent = "copy failed";
+        }
+      });
+      meta.appendChild(copy);
+    }
+    wrapper.appendChild(bubble);
+    wrapper.appendChild(meta);
+    chat.appendChild(wrapper);
+    chat.scrollTop = chat.scrollHeight;
+    return wrapper;
+  }
+
+  function addNotice(text) {
+    const notice = document.createElement("div");
+    notice.className = "notice";
+    notice.textContent = text;
+    chat.appendChild(notice);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function renderToolCard(call, result) {
+    const card = document.createElement("div");
+    card.className = "tool";
+    const head = document.createElement("div");
+    head.className = "tool-head";
+    const name = document.createElement("span");
+    name.className = "tool-name";
+    name.textContent = call.name || "tool";
+    const status = document.createElement("span");
+    const ok = !result || result.ok !== false;
+    status.className = `tool-status${ok ? "" : " err"}`;
+    status.textContent = ok ? "OK" : "ERROR";
+    head.appendChild(name);
+    head.appendChild(status);
+    card.appendChild(head);
+
+    const args = document.createElement("pre");
+    args.textContent = JSON.stringify(call.arguments || {}, null, 2);
+    card.appendChild(args);
+
+    if (result) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Result";
+      details.appendChild(summary);
+      const output = document.createElement("pre");
+      output.className = "out";
+      const value = result.output;
+      output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      details.appendChild(output);
+      details.open = true;
+      card.appendChild(details);
+    }
+    return card;
+  }
+
+  function addAssistant(data) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "msg bot";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    if (data.response) {
+      bubble.textContent = data.response;
+    } else if (!(data.function_calls || []).length) {
+      bubble.textContent = data.error || "No tool call. The engine refused rather than guessing.";
+    } else {
+      bubble.textContent = "Tool calls completed.";
+    }
+    wrapper.appendChild(bubble);
+
+    const calls = data.function_calls || [];
+    const results = data.results || [];
+    if (calls.length) {
+      const tools = document.createElement("div");
+      tools.className = "tools";
+      calls.forEach((call, index) => tools.appendChild(renderToolCard(call, results[index])));
+      wrapper.appendChild(tools);
+    }
+
+    if (data.reasoning) {
+      const details = document.createElement("details");
+      details.className = "why";
+      const summary = document.createElement("summary");
+      summary.textContent = "Why";
+      const text = document.createElement("p");
+      text.textContent = data.reasoning;
+      details.appendChild(summary);
+      details.appendChild(text);
+      wrapper.appendChild(details);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const stamp = document.createElement("span");
+    stamp.textContent = timeLabel();
+    meta.appendChild(stamp);
+    if (data.mode) {
+      const mode = document.createElement("span");
+      mode.textContent = data.mode.toUpperCase();
+      meta.appendChild(mode);
+    }
+    if (typeof data.confidence === "number") {
+      const confidence = document.createElement("span");
+      confidence.textContent = `confidence ${data.confidence.toFixed(2)}`;
+      meta.appendChild(confidence);
+    }
+    if (data.latency_ms != null) {
+      const latency = document.createElement("span");
+      latency.textContent = `${Math.round(data.latency_ms)} ms`;
+      meta.appendChild(latency);
+    }
+    if (data.response) {
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "copy";
+      copy.textContent = "copy";
+      copy.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(data.response);
+          copy.textContent = "copied";
+          setTimeout(() => { copy.textContent = "copy"; }, 1200);
+        } catch (error) {
+          copy.textContent = "copy failed";
+        }
+      });
+      meta.appendChild(copy);
+    }
+    wrapper.appendChild(meta);
+    chat.appendChild(wrapper);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function showEmpty() {
+    chat.innerHTML = `
+      <div class="empty">
+        <h2>Ask the local engine</h2>
+        <p>Needle picks tools, fills arguments and executes them on this machine. Native mode uses the real model; Demo is explicitly simulated.</p>
+        <div class="empty-grid">
+          <button class="empty-chip" data-prompt="What time is it in Kolkata?">What time is it in Kolkata?<span>1 call</span></button>
+          <button class="empty-chip" data-prompt="Dim the bedroom lights to 30%">Dim the bedroom lights to 30%<span>device</span></button>
+          <button class="empty-chip" data-prompt="Extract the invoice: Acme charged $42.50 on 12 November">Extract the invoice<span>extraction</span></button>
+          <button class="empty-chip" data-prompt="List the files in the current directory">List the files<span>filesystem</span></button>
+          <button class="empty-chip" data-prompt="Find the README file">Find the README file<span>search</span></button>
+          <button class="empty-chip" data-prompt="Tell me a joke">Tell me a joke<span>no call</span></button>
+        </div>
+      </div>`;
+    chat.querySelectorAll("[data-prompt]").forEach((button) => {
+      button.addEventListener("click", () => send(button.dataset.prompt));
+    });
+  }
+
+  function setBusy(value) {
+    busy = value;
+    sendButton.disabled = value;
+    sendButton.textContent = value ? "Thinking…" : "Send";
+    clearButton.disabled = value;
+    if (value) {
+      loadingEl = document.createElement("div");
+      loadingEl.className = "loading";
+      loadingEl.innerHTML = "Needle is working <i></i><i></i><i></i>";
+      chat.appendChild(loadingEl);
+      chat.scrollTop = chat.scrollHeight;
+    } else if (loadingEl) {
+      loadingEl.remove();
+      loadingEl = null;
+    }
+  }
+
+  async function loadStatus() {
+    if (location.protocol !== "http:" && location.protocol !== "https:") {
+      modeBadge.className = "badge off";
+      modeBadge.textContent = "START THE SERVER";
+      return;
+    }
+    try {
+      const response = await fetch("/api/status", { headers: { Accept: "application/json" } });
+      if (!response.ok) {
+        setMode("auto", "unavailable");
+        return;
+      }
+      const status = await response.json();
+      const engine = status.engine || {};
+      clearTimeout(statusTimer);
+      if (engine.mode === "native" && engine.state === "ready") {
+        setMode("native");
+      } else if (engine.mode === "native" && engine.state === "initializing") {
+        modeBadge.className = "badge";
+        modeBadge.textContent = "NATIVE · INITIALIZING";
+        statusTimer = setTimeout(loadStatus, 2500);
+      } else if (engine.mode === "native") {
+        setMode("native", "unavailable");
+      } else if (engine.mode === "simulation") {
+        setMode("simulation");
+      } else {
+        setMode("auto", "unavailable");
+      }
+    } catch (error) {
+      setMode("auto", "unavailable");
+    }
+  }
+
+  async function send(text) {
+    const prompt = String(text || "").trim();
+    if (!prompt || busy) return;
+    showEmptyIfNeeded();
+    addMessage("user", prompt);
+    promptInput.value = "";
+    setBusy(true);
+    latencyLabel.textContent = "—";
+    try {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          prompt,
+          session_id: sessionId,
+          mode: modeSelect.value,
+        }),
+      });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (error) {
+        data = null;
+      }
+      if (!response.ok) {
+        const message = (data && data.error) || `HTTP ${response.status}`;
+        addNotice(message);
+        if (response.status === 503) setMode("auto", "unavailable");
+        return;
+      }
+      if (data.session_id) {
+        sessionId = data.session_id;
+        localStorage.setItem(STORAGE_KEY, sessionId);
+        sessionLabel.textContent = shortSession();
+      }
+      if (data.mode) setMode(data.mode, data.success ? "ready" : "unavailable");
+      if (data.latency_ms != null) latencyLabel.textContent = `${Math.round(data.latency_ms)} ms · ${data.mode || ""}`;
+      addAssistant(data);
+      if (data.errors && data.errors.length) {
+        addNotice(data.errors.join("; "));
+      }
+    } catch (error) {
+      addNotice(`Could not reach the backend: ${error.message}`);
+      setMode("auto", "unavailable");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function showEmptyIfNeeded() {
+    if (chat.querySelector(".empty")) chat.innerHTML = "";
+  }
+
+  async function clearChat() {
+    if (busy) return;
+    if (sessionId) {
+      try {
+        await fetch("/chat/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+      } catch (error) {
+        // Clear locally even if the backend is unreachable.
+      }
+    }
+    chat.innerHTML = "";
+    latencyLabel.textContent = "—";
+    showEmptyIfNeeded();
+    showEmpty();
+  }
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    send(promptInput.value);
+  });
+
+  clearButton.addEventListener("click", clearChat);
+
+  modeSelect.addEventListener("change", () => {
+    if (modeSelect.value === "simulation") setMode("simulation");
+    else setMode("auto");
+  });
+
+  document.querySelectorAll("#chips [data-prompt]").forEach((button) => {
+    button.addEventListener("click", () => send(button.dataset.prompt));
+  });
+
+  sessionLabel.textContent = shortSession();
+  showEmpty();
+  loadStatus();
+})();
+</script>
+</body>
+</html>
