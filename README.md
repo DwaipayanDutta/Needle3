@@ -2,12 +2,12 @@
 
 A small, dependency-light toolkit for working with **Needle 3**, Cactus Compute's 8–29 MB on-device model for tool calls, structured extraction and embeddings.
 
-This repository contains two independent surfaces:
+This repository contains two surfaces that work independently or together:
 
 | Surface | What it is | Runtime |
 | --- | --- | --- |
 | **Browser sandbox** (`sandbox.html`) | A polished, standalone playground for designing tool schemas and testing Needle-shaped tool calls. Includes a simulated phone environment, preset requests, editable tool JSON, and JSON/Calls result views. | Any modern browser. No server, no build step. |
-| **Flask mobile chat** (`app.py`) | A mobile-first chat page served at `/`, plus `/chat` and `/health` endpoints. Uses the native Needle engine when importable, otherwise a clearly marked simulation stub. | Python + Flask. |
+| **Flask launcher** (`app.py`) | Serves the sandbox at `/` and `/sandbox`, keeps the original chat UI at `/classic`, and exposes `/chat` and `/health`. Opens the sandbox in your default browser on startup. Uses the native Needle engine when importable, otherwise a clearly marked simulation stub. | Python + Flask. |
 
 The sandbox is a **UI and contract test harness**, not model inference. It reproduces Needle's response shape (`function_calls`, `reasoning`, `confidence`, `results`) with a deterministic rule engine so you can iterate on tool descriptions and UX before wiring a real model.
 
@@ -18,7 +18,7 @@ The sandbox is a **UI and contract test harness**, not model inference. It repro
 - [Quick start](#quick-start)
 - [Command reference](#command-reference)
 - [Browser sandbox](#browser-sandbox)
-- [Flask mobile chat](#flask-mobile-chat)
+- [Flask launcher](#flask-launcher)
 - [API](#api)
 - [Configuration](#configuration)
 - [Native Needle engine](#native-needle-engine)
@@ -81,9 +81,19 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open <http://127.0.0.1:5000>. The same page is reachable from a phone on the same network at `http://<your-computer-ip>:5000`.
+`app.py` starts the server and opens the sandbox at <http://127.0.0.1:5000/> in your default browser. The sandbox is also reachable from a phone on the same network at `http://<your-computer-ip>:5000/`. The original chat UI remains available at `/classic`.
 
-> `app.py` calls `release_port()` on startup, which **terminates whatever process is listening on the target port**. If something else uses port 5000, choose another port first (see [Configuration](#configuration)) or stop the other process yourself.
+To start the server without opening a browser (headless machines, SSH sessions, or when you want to open the page yourself):
+
+```bash
+NEEDLE_OPEN_BROWSER=0 python app.py
+```
+
+```powershell
+$env:NEEDLE_OPEN_BROWSER=0; python app.py
+```
+
+> Startup calls `release_port()` for the configured port, which **terminates whatever process is listening there**. If something else uses port 5000, choose another port first (see [Configuration](#configuration)) or stop the other process yourself.
 
 ### 3. Run the CLI client
 
@@ -110,7 +120,11 @@ All commands run from the repository root unless noted.
 | Activate (Windows PowerShell) | `.\.venv\Scripts\Activate.ps1` |
 | Activate (macOS/Linux) | `source .venv/bin/activate` |
 | Install Flask | `python -m pip install -r requirements.txt` |
-| Run the chat server | `python app.py` |
+| Run the app (sandbox at `/`) | `python app.py` |
+| Run without opening a browser (bash) | `NEEDLE_OPEN_BROWSER=0 python app.py` |
+| Run without opening a browser (PowerShell) | `$env:NEEDLE_OPEN_BROWSER=0; python app.py` |
+| Sandbox UI in the app | `http://127.0.0.1:5000/` |
+| Original chat UI in the app | `http://127.0.0.1:5000/classic` |
 | Run on another port (bash) | `FLASK_PORT=8080 python app.py` |
 | Run on another port (PowerShell) | `$env:FLASK_PORT=8080; python app.py` |
 | Run on another port (cmd.exe) | `set FLASK_PORT=8080 && python app.py` |
@@ -127,7 +141,7 @@ All commands run from the repository root unless noted.
 
 ## Browser sandbox
 
-`sandbox.html` is self-contained: HTML, CSS and JavaScript in one file, with no frameworks, external assets or build step.
+`sandbox.html` is self-contained: HTML, CSS and JavaScript in one file, with no frameworks, external assets or build step. Open it directly, or let `app.py` serve it at `/` and open it for you.
 
 ### Layout
 
@@ -203,15 +217,20 @@ Edit the tool JSON and run again to see the match change. Invalid JSON is report
 
 ---
 
-## Flask mobile chat
+## Flask launcher
 
 `app.py` is a single-file Flask application:
 
-1. On import, it frees the target port (5000 by default).
+1. On startup it frees the configured port (5000 by default), then serves:
+   - `/` and `/sandbox` — the standalone sandbox UI (`sandbox.html`).
+   - `/classic` — the original inline mobile chat page (`MOBILE_HTML`).
+   - `/chat` — the Python engine endpoint.
+   - `/health` — status.
 2. It tries `import needle`. If the import succeeds, `HAS_NATIVE_NEEDLE` is `True`; otherwise a `_StubNeedle` keeps the app running.
-3. `/` renders the inline mobile chat UI (`MOBILE_HTML`).
-4. `/chat` accepts `{ "prompt": "..." }` and returns the engine's response.
-5. `/health` reports `{ "status": "ok", "native_engine": <bool> }`.
+3. Unless `NEEDLE_OPEN_BROWSER=0`, it opens `http://127.0.0.1:<port>/` in the default browser about a second after startup.
+4. If `sandbox.html` cannot be found, `/` and `/sandbox` fall back to the classic chat page.
+
+The sandbox's **Run** button uses its browser-side simulation; it does **not** call `/chat`. Use `/classic` or POST to `/chat` when you want the Python engine.
 
 In simulation mode, the stub supports:
 
@@ -233,9 +252,13 @@ Anything else returns a clearly marked `[Simulation Engine]` message. Simulation
 
 ## API
 
-### `GET /`
+### `GET /` and `GET /sandbox`
 
-Returns the mobile chat HTML page.
+Return the standalone sandbox UI (`sandbox.html`). If the file is missing, both return the classic chat page.
+
+### `GET /classic`
+
+Returns the original inline mobile chat HTML page.
 
 ### `POST /chat`
 
@@ -272,12 +295,13 @@ curl -s -X POST http://127.0.0.1:5000/chat \
 
 ## Configuration
 
-`app.py` reads only these variables:
+`app.py` reads these variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `FLASK_PORT` | `5000` | Port for the Flask server |
 | `PORT` | `5000` | Fallback when `FLASK_PORT` is unset |
+| `NEEDLE_OPEN_BROWSER` | `1` | Set to `0`, `false`, `no` or `off` to skip opening a browser |
 
 The server always binds to `0.0.0.0`. `FLASK_HOST` is **not** read by the current code. Telemetry variables apply to the native `cactus-needle` engine, not to Flask:
 
@@ -362,7 +386,7 @@ For the native engine, set up PRoot Ubuntu inside Termux, then install `cactus-n
 
 ```text
 Needle3/
-├── app.py                    # Flask server, inline mobile chat UI, /chat and /health
+├── app.py                    # Flask launcher: sandbox at /, classic chat at /classic, /chat, /health
 ├── sandbox.html              # Standalone browser sandbox (no dependencies)
 ├── needle_terminal_client.py # Terminal CLI, simulation-aware
 ├── needle_tools_registry.py  # Sample @needle.tool functions (not imported by app.py)
@@ -407,7 +431,16 @@ Correct. It is a deterministic browser simulation with no model download. Instal
 The bridge uses `needle.run(prompt)`, while the documented package exposes `needle.Needle(tools=[...]).run(prompt)`. Build an agent and call that instead. Also verify the wheel matches your platform.
 
 **`release_port()` killed an unrelated process**
-The function runs at import time and terminates whatever listens on the selected port. Start the app with a dedicated `FLASK_PORT`, or remove/guard the call in `app.py` if that behaviour is not wanted.
+Startup terminates whatever is listening on the configured port. Start the app with a dedicated `FLASK_PORT`, or remove/guard the `release_port(port)` call in the main runner if that behaviour is not wanted.
+
+**The browser did not open**
+Open `http://127.0.0.1:<port>/` manually, or make sure `NEEDLE_OPEN_BROWSER` is not set to `0`. Headless and SSH machines may have no browser to launch.
+
+**`/` shows the classic chat instead of the sandbox**
+`sandbox.html` was not found next to `app.py`. Restore the file; `/` falls back to the classic UI by design.
+
+**The sandbox does not reach the Python engine**
+By design: the sandbox is browser-side. Use `/classic` or POST to `/chat` for the Flask bridge.
 
 **Android: `cactus-needle` will not install**
 Use simulation mode or run inside a Linux container. The standard wheels target desktop Linux, macOS and Windows.

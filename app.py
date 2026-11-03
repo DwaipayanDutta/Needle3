@@ -1,6 +1,6 @@
 # app.py – Needle3 Mobile Interface & Automation Server
-import os, sys, json, subprocess, signal, logging
-from flask import Flask, request, jsonify, render_template_string
+import os, sys, json, subprocess, signal, logging, threading, webbrowser
+from flask import Flask, request, jsonify, render_template_string, send_from_directory
 
 # --- 1. Logging Setup ---------------------------------------------------------
 logging.basicConfig(
@@ -34,8 +34,7 @@ def release_port(port=5000):
     except Exception:
         pass
 
-# Release Port 5000 before initializing
-release_port(5000)
+# The port is released in the main runner, once the configured port is known.
 
 # --- 3. Needle Import & Execution Engine ---------------------------------------
 HAS_NATIVE_NEEDLE = False
@@ -241,9 +240,42 @@ MOBILE_HTML = """
 </html>
 """
 
-# --- 6. Endpoints -------------------------------------------------------------
+# --- 6. UI Serving ------------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SANDBOX_FILE = "sandbox.html"
+
+def serve_sandbox():
+    """Serve the standalone sandbox UI; fall back to the classic chat page."""
+    sandbox_path = os.path.join(BASE_DIR, SANDBOX_FILE)
+    if os.path.isfile(sandbox_path):
+        response = send_from_directory(BASE_DIR, SANDBOX_FILE)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    logging.warning("sandbox.html not found; serving the classic mobile chat UI instead.")
+    return render_template_string(MOBILE_HTML, native=HAS_NATIVE_NEEDLE)
+
+def open_browser(port):
+    """Open the sandbox in the default browser once the server is up."""
+    url = f"http://127.0.0.1:{port}/"
+    try:
+        logging.info(f"Opening the sandbox UI at {url}")
+        if not webbrowser.open(url):
+            logging.info("No browser available; open the URL manually.")
+    except Exception as exc:
+        logging.warning(f"Could not open a browser automatically: {exc}")
+
+# --- 7. Endpoints -------------------------------------------------------------
 @app.route("/")
 def index():
+    return serve_sandbox()
+
+@app.route("/sandbox")
+def sandbox():
+    return serve_sandbox()
+
+@app.route("/classic")
+def classic():
     return render_template_string(MOBILE_HTML, native=HAS_NATIVE_NEEDLE)
 
 @app.route("/chat", methods=["POST"])
@@ -262,9 +294,17 @@ def chat():
 def health():
     return jsonify({"status": "ok", "native_engine": HAS_NATIVE_NEEDLE})
 
-# --- 7. Main Runner -----------------------------------------------------------
+# --- 8. Main Runner -----------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("FLASK_PORT", os.environ.get("PORT", 5000)))
     release_port(port)
     logging.info(f"Starting Needle3 server on 0.0.0.0:{port}...")
+    logging.info(f"Sandbox UI:   http://127.0.0.1:{port}/")
+    logging.info(f"Classic UI:   http://127.0.0.1:{port}/classic")
+
+    if os.environ.get("NEEDLE_OPEN_BROWSER", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        opener = threading.Timer(1.2, open_browser, args=(port,))
+        opener.daemon = True
+        opener.start()
+
     app.run(host="0.0.0.0", port=port, debug=False)
